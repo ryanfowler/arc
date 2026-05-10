@@ -331,27 +331,34 @@ func mergeParams(base, overlay match.Params) match.Params {
 		return base
 	}
 
-	if base.Len() == 1 && overlay.Len() == 1 {
-		baseParam := base.At(0)
-		overlayParam := overlay.At(0)
-		if baseParam.Key == overlayParam.Key {
-			return match.ParamsOf(overlayParam)
+	for i := 0; i < base.Len(); i++ {
+		param := base.At(i)
+		if _, ok := overlay.TryGet(param.Key); ok {
+			return mergeParamsWithOverride(base, overlay, i)
 		}
-		return match.ParamsOf(baseParam, overlayParam)
 	}
 
-	out := make([]match.Param, 0, base.Len()+overlay.Len())
+	return match.Merge(base, overlay)
+}
 
-	for i := 0; i < base.Len(); i++ {
+func mergeParamsWithOverride(base, overlay match.Params, conflict int) match.Params {
+	if base.Len() == 1 {
+		return overlay
+	}
+
+	filtered := make([]match.Param, 0, base.Len()-1)
+	for i := 0; i < conflict; i++ {
+		filtered = append(filtered, base.At(i))
+	}
+	for i := conflict + 1; i < base.Len(); i++ {
 		param := base.At(i)
 		if _, ok := overlay.TryGet(param.Key); ok {
 			continue
 		}
-		out = append(out, param)
+		filtered = append(filtered, param)
 	}
 
-	out = overlay.AppendTo(out)
-	return match.ParamsOf(out...)
+	return match.Merge(match.ParamsOf(filtered...), overlay)
 }
 
 func withoutParam(params match.Params, name string) match.Params {
