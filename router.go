@@ -220,9 +220,12 @@ func normalizeHost(host string) string {
 }
 
 func withPath(req *http.Request, path string) *http.Request {
-	clone := req.Clone(req.Context())
-	clone.URL.Path = path
-	clone.URL.RawPath = ""
+	clone := new(http.Request)
+	*clone = *req
+	url := *req.URL
+	url.Path = path
+	url.RawPath = ""
+	clone.URL = &url
 	return clone
 }
 
@@ -246,6 +249,8 @@ func ignoreDuplicate(err error) error {
 
 type paramsContextKey struct{}
 
+var requestParamsKey paramsContextKey
+
 // Params returns the parameters captured while matching req.
 //
 // The returned value is empty when the request did not match a parameterized
@@ -253,7 +258,7 @@ type paramsContextKey struct{}
 // levels, the more specific match wins: route parameters override subrouter
 // parameters, and subrouter parameters override host parameters.
 func Params(req *http.Request) RequestParams {
-	params, _ := req.Context().Value(paramsContextKey{}).(RequestParams)
+	params, _ := req.Context().Value(requestParamsKey).(RequestParams)
 	return params
 }
 
@@ -277,10 +282,19 @@ func withParams(req *http.Request, params match.Params) *http.Request {
 		params = mergeParams(existing, params)
 	}
 
-	return req.WithContext(context.WithValue(req.Context(), paramsContextKey{}, params))
+	return req.WithContext(context.WithValue(req.Context(), requestParamsKey, params))
 }
 
 func mergeParams(base, overlay match.Params) match.Params {
+	if base.Len() == 1 && overlay.Len() == 1 {
+		baseParam := base.At(0)
+		overlayParam := overlay.At(0)
+		if baseParam.Key == overlayParam.Key {
+			return match.ParamsOf(overlayParam)
+		}
+		return match.ParamsOf(baseParam, overlayParam)
+	}
+
 	out := make([]match.Param, 0, base.Len()+overlay.Len())
 
 	for i := 0; i < base.Len(); i++ {
@@ -298,6 +312,25 @@ func mergeParams(base, overlay match.Params) match.Params {
 func withoutParam(params match.Params, name string) match.Params {
 	if params.Len() == 0 {
 		return params
+	}
+
+	switch params.Len() {
+	case 1:
+		param := params.At(0)
+		if param.Key == name {
+			return match.Params{}
+		}
+		return match.ParamsOf(param)
+	case 2:
+		first := params.At(0)
+		second := params.At(1)
+		if first.Key == name {
+			return match.ParamsOf(second)
+		}
+		if second.Key == name {
+			return match.ParamsOf(first)
+		}
+		return match.ParamsOf(first, second)
 	}
 
 	out := make([]match.Param, 0, params.Len())
