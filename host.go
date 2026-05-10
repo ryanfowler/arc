@@ -20,11 +20,13 @@ func (r *Router) Host(pattern string) *Router {
 		WithMethodNotAllowed(r.methodNotAllowed),
 	)
 	host := &hostRouter{
-		router:  child,
-		handler: compose(http.HandlerFunc(child.ServeHTTP), r.middleware),
+		router:     child,
+		handler:    compose(http.HandlerFunc(child.ServeHTTP), r.middleware),
+		middleware: r.middleware,
 	}
 	if err := r.hostRoutes.TryInsert(normalizeHost(pattern), host); err != nil {
 		panic(err)
 	}
+	r.hasHosts = true
 	return child
 }

@@ -39,6 +39,7 @@ type Router struct {
 	subExact   match.Router[*subRouter]
 	subPrefix  match.Router[*subRouter]
 	hostRoutes match.Router[*hostRouter]
+	hasHosts   bool
 
 	middleware []Middleware
 
@@ -51,13 +52,15 @@ type route struct {
 }
 
 type subRouter struct {
-	router  *Router
-	handler http.Handler
+	router     *Router
+	handler    http.Handler
+	middleware []Middleware
 }
 
 type hostRouter struct {
-	router  *Router
-	handler http.Handler
+	router     *Router
+	handler    http.Handler
+	middleware []Middleware
 }
 
 // Option configures a Router when it is created with New.
@@ -124,72 +127,95 @@ func (r *Router) Use(mw ...Middleware) {
 // ServeHTTP satisfies http.Handler. It should usually be called by net/http
 // rather than directly.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if r.serveHost(w, req) {
-		return
-	}
-	if r.serveSubRouter(w, req) {
-		return
-	}
-	if r.serveRoute(w, req) {
-		return
-	}
-
-	if _, _, ok := r.anyRoutes.Match(req.URL.Path); ok {
-		r.methodNotAllowed.ServeHTTP(w, req)
-		return
-	}
-
-	r.notFound.ServeHTTP(w, req)
+	r.serve(w, req, req.URL.Path, match.Params{})
 }
 
-func (r *Router) serveHost(w http.ResponseWriter, req *http.Request) bool {
+func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, params match.Params) {
+	if r.serveHost(w, req, path, params) {
+		return
+	}
+	if r.serveSubRouter(w, req, path, params) {
+		return
+	}
+	if r.serveRoute(w, req, path, params) {
+		return
+	}
+
+	if _, _, ok := r.anyRoutes.Match(path); ok {
+		r.methodNotAllowed.ServeHTTP(w, requestForHandler(req, path, params))
+		return
+	}
+
+	r.notFound.ServeHTTP(w, requestForHandler(req, path, params))
+}
+
+func (r *Router) serveHost(w http.ResponseWriter, req *http.Request, path string, params match.Params) bool {
+	if !r.hasHosts {
+		return false
+	}
+
 	host := normalizeHost(req.Host)
 	if host == "" {
 		return false
 	}
 
-	router, params, ok := r.hostRoutes.Match(host)
+	router, hostParams, ok := r.hostRoutes.Match(host)
 	if !ok {
 		return false
 	}
 
-	router.handler.ServeHTTP(w, withParams(req, params))
-	return true
-}
-
-func (r *Router) serveSubRouter(w http.ResponseWriter, req *http.Request) bool {
-	sub, params, ok := r.subExact.Match(req.URL.Path)
-	if ok {
-		nextReq := withParams(req, params)
-		nextReq = withPath(nextReq, "/")
-		sub.handler.ServeHTTP(w, nextReq)
+	nextParams := mergeParams(params, hostParams)
+	if len(router.middleware) > 0 {
+		router.handler.ServeHTTP(w, requestForHandler(req, path, nextParams))
 		return true
 	}
 
-	sub, params, ok = r.subPrefix.Match(req.URL.Path)
+	router.router.serve(w, req, path, nextParams)
+	return true
+}
+
+func (r *Router) serveSubRouter(w http.ResponseWriter, req *http.Request, path string, params match.Params) bool {
+	sub, subParams, ok := r.subExact.Match(path)
+	if ok {
+		nextParams := mergeParams(params, subParams)
+		if len(sub.middleware) > 0 {
+			sub.handler.ServeHTTP(w, requestForHandler(req, "/", nextParams))
+			return true
+		}
+
+		sub.router.serve(w, req, "/", nextParams)
+		return true
+	}
+
+	sub, subParams, ok = r.subPrefix.Match(path)
 	if !ok {
 		return false
 	}
 
-	rest := params.Get(subRouterRestParam)
-	nextReq := withParams(req, withoutParam(params, subRouterRestParam))
-	nextReq = withPath(nextReq, restPath(rest))
-	sub.handler.ServeHTTP(w, nextReq)
+	rest := subParams.Get(subRouterRestParam)
+	nextPath := restPath(rest)
+	nextParams := mergeParams(params, withoutParam(subParams, subRouterRestParam))
+	if len(sub.middleware) > 0 {
+		sub.handler.ServeHTTP(w, requestForHandler(req, nextPath, nextParams))
+		return true
+	}
+
+	sub.router.serve(w, req, nextPath, nextParams)
 	return true
 }
 
-func (r *Router) serveRoute(w http.ResponseWriter, req *http.Request) bool {
+func (r *Router) serveRoute(w http.ResponseWriter, req *http.Request, path string, params match.Params) bool {
 	routes := r.routes[req.Method]
 	if routes == nil {
 		return false
 	}
 
-	route, params, ok := routes.Match(req.URL.Path)
+	route, routeParams, ok := routes.Match(path)
 	if !ok {
 		return false
 	}
 
-	route.handler.ServeHTTP(w, withParams(req, params))
+	route.handler.ServeHTTP(w, requestForHandler(req, path, mergeParams(params, routeParams)))
 	return true
 }
 
@@ -213,6 +239,12 @@ func normalizeHost(host string) string {
 	if host == "" {
 		return ""
 	}
+
+	if i := strings.LastIndexByte(host, ':'); i > 0 && strings.IndexByte(host[:i], ':') == -1 {
+		host = host[:i]
+		return strings.ToLower(host)
+	}
+
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
@@ -220,6 +252,10 @@ func normalizeHost(host string) string {
 }
 
 func withPath(req *http.Request, path string) *http.Request {
+	if req.URL.Path == path {
+		return req
+	}
+
 	clone := new(http.Request)
 	*clone = *req
 	url := *req.URL
@@ -237,6 +273,16 @@ func restPath(rest string) string {
 		return rest
 	}
 	return "/" + rest
+}
+
+func requestForHandler(req *http.Request, path string, params match.Params) *http.Request {
+	if req.URL.Path != path {
+		req = withPath(req, path)
+	}
+	if params.Len() > 0 {
+		req = withParams(req, params)
+	}
+	return req
 }
 
 func ignoreDuplicate(err error) error {
@@ -286,6 +332,13 @@ func withParams(req *http.Request, params match.Params) *http.Request {
 }
 
 func mergeParams(base, overlay match.Params) match.Params {
+	if base.Len() == 0 {
+		return overlay
+	}
+	if overlay.Len() == 0 {
+		return base
+	}
+
 	if base.Len() == 1 && overlay.Len() == 1 {
 		baseParam := base.At(0)
 		overlayParam := overlay.At(0)

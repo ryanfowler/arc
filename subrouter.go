@@ -23,8 +23,9 @@ func (r *Router) SubRouter(pattern string) *Router {
 	)
 
 	sub := &subRouter{
-		router:  child,
-		handler: compose(http.HandlerFunc(child.ServeHTTP), r.middleware),
+		router:     child,
+		handler:    compose(http.HandlerFunc(child.ServeHTTP), r.middleware),
+		middleware: r.middleware,
 	}
 
 	if err := r.subExact.TryInsert(cleanMountPattern(pattern), sub); err != nil {
