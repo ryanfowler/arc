@@ -251,20 +251,6 @@ func normalizeHost(host string) string {
 	return strings.ToLower(host)
 }
 
-func withPath(req *http.Request, path string) *http.Request {
-	if req.URL.Path == path {
-		return req
-	}
-
-	clone := new(http.Request)
-	*clone = *req
-	url := *req.URL
-	url.Path = path
-	url.RawPath = ""
-	clone.URL = &url
-	return clone
-}
-
 func restPath(rest string) string {
 	if rest == "" {
 		return "/"
@@ -276,13 +262,32 @@ func restPath(rest string) string {
 }
 
 func requestForHandler(req *http.Request, path string, params match.Params) *http.Request {
-	if req.URL.Path != path {
-		req = withPath(req, path)
-	}
 	if params.Len() > 0 {
-		req = withParams(req, params)
+		existing := Params(req)
+		if existing.Len() > 0 {
+			params = mergeParams(existing, params)
+		}
 	}
-	return req
+
+	if req.URL.Path == path && params.Len() == 0 {
+		return req
+	}
+
+	clone := req
+	if params.Len() > 0 {
+		clone = req.WithContext(context.WithValue(req.Context(), requestParamsKey, params))
+	} else {
+		clone = new(http.Request)
+		*clone = *req
+	}
+
+	if req.URL.Path != path {
+		url := *req.URL
+		url.Path = path
+		url.RawPath = ""
+		clone.URL = &url
+	}
+	return clone
 }
 
 func ignoreDuplicate(err error) error {
@@ -316,19 +321,6 @@ func Params(req *http.Request) RequestParams {
 // values.
 func Param(req *http.Request, name string) string {
 	return Params(req).Get(name)
-}
-
-func withParams(req *http.Request, params match.Params) *http.Request {
-	if params.Len() == 0 {
-		return req
-	}
-
-	existing := Params(req)
-	if existing.Len() > 0 {
-		params = mergeParams(existing, params)
-	}
-
-	return req.WithContext(context.WithValue(req.Context(), requestParamsKey, params))
 }
 
 func mergeParams(base, overlay match.Params) match.Params {
