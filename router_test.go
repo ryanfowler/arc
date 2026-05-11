@@ -359,6 +359,17 @@ func TestSubRouterPreservesQuery(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestSubRouterMountSkipsOnlyMountSeparator(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api")
+	api.Get("/users/{id}", writeStatus(http.StatusAccepted))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api//users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestSubRouterReturnsChildNotFoundAndMethodNotAllowed(t *testing.T) {
 	r := New(
 		WithNotFound(http.HandlerFunc(writeStatus(http.StatusTeapot))),
@@ -470,6 +481,55 @@ func TestNestedSubRoutersMergeParams(t *testing.T) {
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/accounts/acme/users/42", nil))
 
 	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestSubRouterChoosesLongestMount(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api")
+	v1 := r.SubRouter("/api/v1")
+
+	api.Get("/users/{id}", writeStatus(http.StatusAccepted))
+	v1.Get("/users/{id}", writeStatus(http.StatusCreated))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/users/42", nil))
+
+	assertStatus(t, rec, http.StatusCreated)
+}
+
+func TestSubRouterMountWithSegmentAffixes(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api/v{version}.json")
+	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "version"); got != "1" {
+			t.Fatalf("Param(version) = %q, want %q", got, "1")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1.json/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestSubRouterBacktracksAcrossParamMounts(t *testing.T) {
+	r := New()
+	foo := r.SubRouter("/{section}/foo")
+	bar := r.SubRouter("/{section}/bar")
+
+	foo.Get("/", writeStatus(http.StatusAccepted))
+	bar.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "section"); got != "api" {
+			t.Fatalf("Param(section) = %q, want %q", got, "api")
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/bar", nil))
+
+	assertStatus(t, rec, http.StatusCreated)
 }
 
 func TestHostRouterMatchesAndMergesParams(t *testing.T) {
