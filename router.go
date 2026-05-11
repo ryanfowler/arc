@@ -10,8 +10,6 @@ import (
 	"github.com/ryanfowler/match"
 )
 
-const subRouterRestParam = "__arc_rest"
-
 // Middleware wraps an HTTP handler.
 //
 // Middleware is composed in registration order. If a router uses middleware a,
@@ -38,8 +36,7 @@ type Router struct {
 	routes             map[string]*match.Router[*route]
 	methodRoutes       match.Router[*routeMethods]
 	routeMethods       map[string]*routeMethods
-	subExact           match.Router[*subRouter]
-	subPrefix          match.Router[*subRouter]
+	subMounts          mountMatcher
 	hostRoutes         match.Router[*hostRouter]
 	hasHosts           bool
 	hasSubRouters      bool
@@ -203,26 +200,12 @@ func (r *Router) serveSubRouter(w http.ResponseWriter, req *http.Request, path s
 		return false
 	}
 
-	sub, subParams, ok := r.subExact.Match(path)
-	if ok {
-		nextParams := mergeParams(params, subParams)
-		if len(sub.middleware) > 0 {
-			sub.handler.ServeHTTP(w, requestForRouter(req, "/", nextParams))
-			return true
-		}
-
-		sub.router.serve(w, req, "/", nextParams)
-		return true
-	}
-
-	sub, subParams, ok = r.subPrefix.Match(path)
+	sub, nextPath, subParams, ok := r.subMounts.Match(path)
 	if !ok {
 		return false
 	}
 
-	rest := subParams.Get(subRouterRestParam)
-	nextPath := restPath(rest)
-	nextParams := mergeParams(params, withoutParam(subParams, subRouterRestParam))
+	nextParams := mergeParams(params, subParams)
 	if len(sub.middleware) > 0 {
 		sub.handler.ServeHTTP(w, requestForRouter(req, nextPath, nextParams))
 		return true
@@ -354,16 +337,6 @@ func normalizeHost(host string) string {
 	return strings.ToLower(host)
 }
 
-func restPath(rest string) string {
-	if rest == "" {
-		return "/"
-	}
-	if strings.HasPrefix(rest, "/") {
-		return rest
-	}
-	return "/" + rest
-}
-
 func requestForHandler(req *http.Request, params match.Params) *http.Request {
 	if params.Len() == 0 {
 		return req
@@ -487,39 +460,4 @@ func mergeParamsWithOverride(base, overlay match.Params, conflict int) match.Par
 	}
 
 	return match.Merge(match.ParamsOf(filtered...), overlay)
-}
-
-func withoutParam(params match.Params, name string) match.Params {
-	if params.Len() == 0 {
-		return params
-	}
-
-	switch params.Len() {
-	case 1:
-		param := params.At(0)
-		if param.Key == name {
-			return match.Params{}
-		}
-		return match.ParamsOf(param)
-	case 2:
-		first := params.At(0)
-		second := params.At(1)
-		if first.Key == name {
-			return match.ParamsOf(second)
-		}
-		if second.Key == name {
-			return match.ParamsOf(first)
-		}
-		return match.ParamsOf(first, second)
-	}
-
-	out := make([]match.Param, 0, params.Len())
-	for i := 0; i < params.Len(); i++ {
-		param := params.At(i)
-		if param.Key == name {
-			continue
-		}
-		out = append(out, param)
-	}
-	return match.ParamsOf(out...)
 }

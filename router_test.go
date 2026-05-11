@@ -289,6 +289,25 @@ func TestSubRouterMatchesAndMergesParams(t *testing.T) {
 	}
 }
 
+func TestSubRouterMountParamCanUseFormerRestName(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api/{__arc_rest}")
+	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "__arc_rest"); got != "v1" {
+			t.Fatalf("Param(__arc_rest) = %q, want %q", got, "v1")
+		}
+		if got := Param(req, "id"); got != "42" {
+			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestSubRouterRegistrationEnablesSubRouterMatching(t *testing.T) {
 	r := New()
 	if r.hasSubRouters {

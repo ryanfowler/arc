@@ -1,6 +1,10 @@
 package arc
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/ryanfowler/match"
+)
 
 // SubRouter registers and returns a child router mounted at pattern.
 //
@@ -27,20 +31,63 @@ func (r *Router) SubRouter(pattern string) *Router {
 		middleware: r.middleware,
 	}
 
-	if err := r.subExact.TryInsert(cleanMountPattern(pattern), sub); err != nil {
-		panic(err)
-	}
-	if slashPattern := slashMountPattern(pattern); slashPattern != "" {
-		if err := r.subExact.TryInsert(slashPattern, sub); err != nil {
-			panic(err)
-		}
-	}
-	if err := r.subPrefix.TryInsert(catchAllMountPattern(pattern), sub); err != nil {
+	if err := r.subMounts.TryInsert(pattern, sub); err != nil {
 		panic(err)
 	}
 
 	r.hasSubRouters = true
 	return child
+}
+
+type mountMatcher struct {
+	exact    match.Router[*subRouter]
+	prefixes match.Router[*subRouter]
+}
+
+func (m *mountMatcher) TryInsert(pattern string, sub *subRouter) error {
+	pattern = cleanMountPattern(pattern)
+	if err := m.exact.TryInsert(pattern, sub); err != nil {
+		return err
+	}
+	if slashPattern := slashMountPattern(pattern); slashPattern != "" {
+		if err := m.exact.TryInsert(slashPattern, sub); err != nil {
+			return err
+		}
+	}
+	return m.prefixes.TryInsert(pattern, sub)
+}
+
+func (m *mountMatcher) Match(path string) (*subRouter, string, match.Params, bool) {
+	if sub, params, ok := m.exact.Match(path); ok {
+		return sub, "/", params, true
+	}
+
+	for i := len(path) - 1; i > 0; i-- {
+		if path[i] != '/' {
+			continue
+		}
+		if sub, params, ok := m.prefixes.Match(path[:i]); ok {
+			return sub, remainingMountPath(path[i+1:]), params, true
+		}
+	}
+
+	if path != "" && path != "/" {
+		if sub, params, ok := m.prefixes.Match("/"); ok {
+			return sub, path, params, true
+		}
+	}
+
+	return nil, "", match.Params{}, false
+}
+
+func remainingMountPath(rest string) string {
+	if rest == "" {
+		return "/"
+	}
+	if strings.HasPrefix(rest, "/") {
+		return rest
+	}
+	return "/" + rest
 }
 
 func cleanMountPattern(pattern string) string {
@@ -54,14 +101,6 @@ func cleanMountPattern(pattern string) string {
 		}
 	}
 	return pattern
-}
-
-func catchAllMountPattern(pattern string) string {
-	pattern = cleanMountPattern(pattern)
-	if pattern == "/" {
-		return "/{" + "*" + subRouterRestParam + "}"
-	}
-	return pattern + "/{" + "*" + subRouterRestParam + "}"
 }
 
 func slashMountPattern(pattern string) string {
