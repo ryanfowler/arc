@@ -34,12 +34,13 @@ type RequestParams = match.Params
 // registration methods are not safe to call concurrently with ServeHTTP or with
 // other registration methods.
 type Router struct {
-	routes     map[string]*match.Router[*route]
-	anyRoutes  match.Router[struct{}]
-	subExact   match.Router[*subRouter]
-	subPrefix  match.Router[*subRouter]
-	hostRoutes match.Router[*hostRouter]
-	hasHosts   bool
+	routes        map[string]*match.Router[*route]
+	anyRoutes     match.Router[struct{}]
+	subExact      match.Router[*subRouter]
+	subPrefix     match.Router[*subRouter]
+	hostRoutes    match.Router[*hostRouter]
+	hasHosts      bool
+	hasSubRouters bool
 
 	middleware []Middleware
 
@@ -184,6 +185,10 @@ func (r *Router) serveHost(w http.ResponseWriter, req *http.Request, path string
 }
 
 func (r *Router) serveSubRouter(w http.ResponseWriter, req *http.Request, path string, params match.Params) bool {
+	if !r.hasSubRouters {
+		return false
+	}
+
 	sub, subParams, ok := r.subExact.Match(path)
 	if ok {
 		nextParams := mergeParams(params, subParams)

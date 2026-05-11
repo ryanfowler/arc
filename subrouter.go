@@ -39,6 +39,7 @@ func (r *Router) SubRouter(pattern string) *Router {
 		panic(err)
 	}
 
+	r.hasSubRouters = true
 	return child
 }
 

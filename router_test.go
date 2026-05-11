@@ -237,6 +237,24 @@ func TestSubRouterMatchesAndMergesParams(t *testing.T) {
 	}
 }
 
+func TestSubRouterRegistrationEnablesSubRouterMatching(t *testing.T) {
+	r := New()
+	if r.hasSubRouters {
+		t.Fatal("new router hasSubRouters = true, want false")
+	}
+
+	api := r.SubRouter("/api")
+	if !r.hasSubRouters {
+		t.Fatal("router hasSubRouters = false, want true after SubRouter")
+	}
+
+	api.Get("/", writeStatus(http.StatusCreated))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api", nil))
+
+	assertStatus(t, rec, http.StatusCreated)
+}
+
 func TestSubRouterRootPaths(t *testing.T) {
 	tests := []string{"/api", "/api/"}
 
