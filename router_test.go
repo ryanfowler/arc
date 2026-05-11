@@ -189,6 +189,26 @@ func TestHandleErrReturnsMatchErrors(t *testing.T) {
 	}
 }
 
+func TestHandleErrDoesNotPartiallyRegisterFailedRoute(t *testing.T) {
+	r := New()
+	if err := r.HandleErr(http.MethodGet, "/users/{id}", writeStatus(http.StatusNoContent)); err != nil {
+		t.Fatalf("HandleErr valid route error = %v", err)
+	}
+
+	var conflict *match.ConflictError
+	if err := r.HandleErr(http.MethodPost, "/users/{name}", writeStatus(http.StatusCreated)); !errors.As(err, &conflict) {
+		t.Fatalf("HandleErr conflict error = %v, want *match.ConflictError", err)
+	}
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/users/42", nil))
+
+	assertStatus(t, rec, http.StatusMethodNotAllowed)
+	if got := rec.Header().Get("Allow"); got != http.MethodGet {
+		t.Fatalf("Allow = %q, want %q", got, http.MethodGet)
+	}
+}
+
 func TestHandlePanicsForInvalidPattern(t *testing.T) {
 	defer func() {
 		if recover() == nil {

@@ -28,12 +28,21 @@ func (r *Router) HandleErr(method, pattern string, h http.Handler) error {
 
 	compiled := compose(h, r.middleware)
 	rt := &route{handler: compiled}
+	registration := routeRegistration{
+		method:  method,
+		pattern: pattern,
+		route:   rt,
+	}
+
+	if err := r.insertMethodRoute(registration); err != nil {
+		return err
+	}
 	if _, err := r.addRouteMethod(pattern, method); err != nil {
+		r.rebuildRouteTables()
 		return err
 	}
-	if err := r.methodRouter(method).TryInsert(pattern, rt); err != nil {
-		return err
-	}
+
+	r.routeRegistrations = append(r.routeRegistrations, registration)
 	return nil
 }
 

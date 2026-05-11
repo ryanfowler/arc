@@ -34,14 +34,15 @@ type RequestParams = match.Params
 // registration methods are not safe to call concurrently with ServeHTTP or with
 // other registration methods.
 type Router struct {
-	routes        map[string]*match.Router[*route]
-	methodRoutes  match.Router[*routeMethods]
-	routeMethods  map[string]*routeMethods
-	subExact      match.Router[*subRouter]
-	subPrefix     match.Router[*subRouter]
-	hostRoutes    match.Router[*hostRouter]
-	hasHosts      bool
-	hasSubRouters bool
+	routeRegistrations []routeRegistration
+	routes             map[string]*match.Router[*route]
+	methodRoutes       match.Router[*routeMethods]
+	routeMethods       map[string]*routeMethods
+	subExact           match.Router[*subRouter]
+	subPrefix          match.Router[*subRouter]
+	hostRoutes         match.Router[*hostRouter]
+	hasHosts           bool
+	hasSubRouters      bool
 
 	middleware []Middleware
 
@@ -51,6 +52,12 @@ type Router struct {
 
 type route struct {
 	handler http.Handler
+}
+
+type routeRegistration struct {
+	method  string
+	pattern string
+	route   *route
 }
 
 type routeMethods struct {
@@ -240,13 +247,57 @@ func (r *Router) serveRoute(w http.ResponseWriter, req *http.Request, path strin
 	return true
 }
 
-func (r *Router) methodRouter(method string) *match.Router[*route] {
-	routes := r.routes[method]
-	if routes == nil {
-		routes = &match.Router[*route]{}
-		r.routes[method] = routes
+func (r *Router) insertMethodRoute(reg routeRegistration) error {
+	routes := r.routes[reg.method]
+	if routes != nil {
+		return routes.TryInsert(reg.pattern, reg.route)
 	}
-	return routes
+
+	routes = &match.Router[*route]{}
+	if err := routes.TryInsert(reg.pattern, reg.route); err != nil {
+		return err
+	}
+	r.routes[reg.method] = routes
+	return nil
+}
+
+func (r *Router) rebuildRouteTables() {
+	routes, methodRoutes, routeMethods, err := buildRouteTables(r.routeRegistrations)
+	if err != nil {
+		panic(err)
+	}
+	r.routes = routes
+	r.methodRoutes = methodRoutes
+	r.routeMethods = routeMethods
+}
+
+func buildRouteTables(registrations []routeRegistration) (map[string]*match.Router[*route], match.Router[*routeMethods], map[string]*routeMethods, error) {
+	routes := make(map[string]*match.Router[*route])
+	methodsByPattern := make(map[string]*routeMethods)
+	var methodRoutes match.Router[*routeMethods]
+
+	for _, reg := range registrations {
+		methodRouter := routes[reg.method]
+		if methodRouter == nil {
+			methodRouter = &match.Router[*route]{}
+			routes[reg.method] = methodRouter
+		}
+		if err := methodRouter.TryInsert(reg.pattern, reg.route); err != nil {
+			return nil, match.Router[*routeMethods]{}, nil, err
+		}
+
+		methods := methodsByPattern[reg.pattern]
+		if methods == nil {
+			methods = &routeMethods{}
+			if err := methodRoutes.TryInsert(reg.pattern, methods); err != nil {
+				return nil, match.Router[*routeMethods]{}, nil, err
+			}
+			methodsByPattern[reg.pattern] = methods
+		}
+		methods.add(reg.method)
+	}
+
+	return routes, methodRoutes, methodsByPattern, nil
 }
 
 func (r *Router) addRouteMethod(pattern, method string) (*routeMethods, error) {
