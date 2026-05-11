@@ -2,9 +2,9 @@ package arc
 
 import (
 	"context"
-	"errors"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/ryanfowler/match"
@@ -35,7 +35,8 @@ type RequestParams = match.Params
 // other registration methods.
 type Router struct {
 	routes        map[string]*match.Router[*route]
-	anyRoutes     match.Router[struct{}]
+	methodRoutes  match.Router[*routeMethods]
+	routeMethods  map[string]*routeMethods
 	subExact      match.Router[*subRouter]
 	subPrefix     match.Router[*subRouter]
 	hostRoutes    match.Router[*hostRouter]
@@ -50,6 +51,10 @@ type Router struct {
 
 type route struct {
 	handler http.Handler
+}
+
+type routeMethods struct {
+	methods []string
 }
 
 type subRouter struct {
@@ -83,6 +88,7 @@ type Option func(*Router)
 func New(opts ...Option) *Router {
 	r := &Router{
 		routes:           make(map[string]*match.Router[*route]),
+		routeMethods:     make(map[string]*routeMethods),
 		notFound:         http.NotFoundHandler(),
 		methodNotAllowed: http.HandlerFunc(defaultMethodNotAllowed),
 	}
@@ -151,7 +157,8 @@ func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, pa
 		return
 	}
 
-	if _, _, ok := r.anyRoutes.Match(path); ok {
+	if methods, _, ok := r.methodRoutes.Match(path); ok {
+		w.Header().Set("Allow", methods.allowHeader())
 		r.methodNotAllowed.ServeHTTP(w, requestForHandler(req, params))
 		return
 	}
@@ -242,6 +249,37 @@ func (r *Router) methodRouter(method string) *match.Router[*route] {
 	return routes
 }
 
+func (r *Router) addRouteMethod(pattern, method string) (*routeMethods, error) {
+	methods := r.routeMethods[pattern]
+	if methods != nil {
+		methods.add(method)
+		return methods, nil
+	}
+
+	methods = &routeMethods{}
+	if err := r.methodRoutes.TryInsert(pattern, methods); err != nil {
+		return nil, err
+	}
+	methods.add(method)
+	r.routeMethods[pattern] = methods
+	return methods, nil
+}
+
+func (m *routeMethods) add(method string) {
+	i := sort.SearchStrings(m.methods, method)
+	if i < len(m.methods) && m.methods[i] == method {
+		return
+	}
+
+	m.methods = append(m.methods, "")
+	copy(m.methods[i+1:], m.methods[i:])
+	m.methods[i] = method
+}
+
+func (m *routeMethods) allowHeader() string {
+	return strings.Join(m.methods, ", ")
+}
+
 func compose(h http.Handler, middleware []Middleware) http.Handler {
 	for i := len(middleware) - 1; i >= 0; i-- {
 		h = middleware[i](h)
@@ -307,14 +345,6 @@ func requestForRouter(req *http.Request, path string, params match.Params) *http
 	}
 
 	return req.WithContext(ctx)
-}
-
-func ignoreDuplicate(err error) error {
-	var conflict *match.ConflictError
-	if errors.As(err, &conflict) && conflict.Route == conflict.With {
-		return nil
-	}
-	return err
 }
 
 type requestContextKey int

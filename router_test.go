@@ -72,6 +72,9 @@ func TestRouterReturnsMethodNotAllowed(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 	}
+	if got := rec.Header().Get("Allow"); got != http.MethodGet {
+		t.Fatalf("Allow = %q, want %q", got, http.MethodGet)
+	}
 }
 
 func TestRouterAllowsSamePatternForDifferentMethods(t *testing.T) {
@@ -94,6 +97,35 @@ func TestRouterAllowsSamePatternForDifferentMethods(t *testing.T) {
 			r.ServeHTTP(rec, httptest.NewRequest(tt.method, "/resource", nil))
 			assertStatus(t, rec, tt.want)
 		})
+	}
+}
+
+func TestRouterMethodNotAllowedAllowHeaderIncludesRegisteredMethods(t *testing.T) {
+	r := New()
+	r.Post("/resource/{id}", writeStatus(http.StatusCreated))
+	r.Get("/resource/{id}", writeStatus(http.StatusAccepted))
+	r.Delete("/resource/{id}", writeStatus(http.StatusNoContent))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/resource/42", nil))
+
+	assertStatus(t, rec, http.StatusMethodNotAllowed)
+	if got, want := rec.Header().Get("Allow"), "DELETE, GET, POST"; got != want {
+		t.Fatalf("Allow = %q, want %q", got, want)
+	}
+}
+
+func TestRouterMethodNotAllowedAllowHeaderWithCustomHandler(t *testing.T) {
+	r := New(WithMethodNotAllowed(http.HandlerFunc(writeStatus(http.StatusConflict))))
+	r.Get("/known", writeStatus(http.StatusNoContent))
+	r.Patch("/known", writeStatus(http.StatusAccepted))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/known", nil))
+
+	assertStatus(t, rec, http.StatusConflict)
+	if got, want := rec.Header().Get("Allow"), "GET, PATCH"; got != want {
+		t.Fatalf("Allow = %q, want %q", got, want)
 	}
 }
 

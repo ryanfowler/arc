@@ -28,10 +28,10 @@ func (r *Router) HandleErr(method, pattern string, h http.Handler) error {
 
 	compiled := compose(h, r.middleware)
 	rt := &route{handler: compiled}
-	if err := r.methodRouter(method).TryInsert(pattern, rt); err != nil {
+	if _, err := r.addRouteMethod(pattern, method); err != nil {
 		return err
 	}
-	if err := ignoreDuplicate(r.anyRoutes.TryInsert(pattern, struct{}{})); err != nil {
+	if err := r.methodRouter(method).TryInsert(pattern, rt); err != nil {
 		return err
 	}
 	return nil

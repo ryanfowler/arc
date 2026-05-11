@@ -158,7 +158,8 @@ subrouters and routes.
 ## Fallback Handlers
 
 By default, unmatched requests use `http.NotFoundHandler`, and paths registered
-for a different method receive status `405 Method Not Allowed`.
+for a different method receive status `405 Method Not Allowed` with an `Allow`
+header listing the registered methods.
 
 You can customize both:
 
