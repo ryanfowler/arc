@@ -128,9 +128,10 @@ api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
 })
 ```
 
-A subrouter receives the remaining path after the mount point. For example,
+A subrouter matches using the remaining path after the mount point. For example,
 `/api/users` is dispatched inside the child router as `/users`. Both `/api` and
-`/api/` are dispatched to the child router's `/` route.
+`/api/` are dispatched to the child router's `/` route. The request URL is not
+rewritten; middleware and handlers still see the original `req.URL.Path`.
 
 ## Host Routing
 

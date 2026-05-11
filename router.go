@@ -63,6 +63,15 @@ type hostRouter struct {
 	middleware []Middleware
 }
 
+type routerHandler struct {
+	router *Router
+}
+
+func (h routerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	path, params := dispatchState(req)
+	h.router.serve(w, req, path, params)
+}
+
 // Option configures a Router when it is created with New.
 type Option func(*Router)
 
@@ -142,11 +151,11 @@ func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, pa
 	}
 
 	if _, _, ok := r.anyRoutes.Match(path); ok {
-		r.methodNotAllowed.ServeHTTP(w, requestForHandler(req, path, params))
+		r.methodNotAllowed.ServeHTTP(w, requestForHandler(req, params))
 		return
 	}
 
-	r.notFound.ServeHTTP(w, requestForHandler(req, path, params))
+	r.notFound.ServeHTTP(w, requestForHandler(req, params))
 }
 
 func (r *Router) serveHost(w http.ResponseWriter, req *http.Request, path string, params match.Params) bool {
@@ -166,7 +175,7 @@ func (r *Router) serveHost(w http.ResponseWriter, req *http.Request, path string
 
 	nextParams := mergeParams(params, hostParams)
 	if len(router.middleware) > 0 {
-		router.handler.ServeHTTP(w, requestForHandler(req, path, nextParams))
+		router.handler.ServeHTTP(w, requestForRouter(req, path, nextParams))
 		return true
 	}
 
@@ -179,7 +188,7 @@ func (r *Router) serveSubRouter(w http.ResponseWriter, req *http.Request, path s
 	if ok {
 		nextParams := mergeParams(params, subParams)
 		if len(sub.middleware) > 0 {
-			sub.handler.ServeHTTP(w, requestForHandler(req, "/", nextParams))
+			sub.handler.ServeHTTP(w, requestForRouter(req, "/", nextParams))
 			return true
 		}
 
@@ -196,7 +205,7 @@ func (r *Router) serveSubRouter(w http.ResponseWriter, req *http.Request, path s
 	nextPath := restPath(rest)
 	nextParams := mergeParams(params, withoutParam(subParams, subRouterRestParam))
 	if len(sub.middleware) > 0 {
-		sub.handler.ServeHTTP(w, requestForHandler(req, nextPath, nextParams))
+		sub.handler.ServeHTTP(w, requestForRouter(req, nextPath, nextParams))
 		return true
 	}
 
@@ -215,7 +224,7 @@ func (r *Router) serveRoute(w http.ResponseWriter, req *http.Request, path strin
 		return false
 	}
 
-	route.handler.ServeHTTP(w, requestForHandler(req, path, mergeParams(params, routeParams)))
+	route.handler.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams)))
 	return true
 }
 
@@ -261,33 +270,38 @@ func restPath(rest string) string {
 	return "/" + rest
 }
 
-func requestForHandler(req *http.Request, path string, params match.Params) *http.Request {
-	if params.Len() > 0 {
-		existing := Params(req)
-		if existing.Len() > 0 {
-			params = mergeParams(existing, params)
-		}
-	}
-
-	if req.URL.Path == path && params.Len() == 0 {
+func requestForHandler(req *http.Request, params match.Params) *http.Request {
+	if params.Len() == 0 {
 		return req
 	}
 
-	clone := req
-	if params.Len() > 0 {
-		clone = req.WithContext(context.WithValue(req.Context(), requestParamsKey, params))
-	} else {
-		clone = new(http.Request)
-		*clone = *req
+	if paramsEqual(Params(req), params) {
+		return req
 	}
 
-	if req.URL.Path != path {
-		url := *req.URL
-		url.Path = path
-		url.RawPath = ""
-		clone.URL = &url
+	return req.WithContext(context.WithValue(req.Context(), requestParamsKey, params))
+}
+
+func requestForRouter(req *http.Request, path string, params match.Params) *http.Request {
+	currentParams := Params(req)
+	currentPath, hasPath := dispatchPath(req)
+	paramsMatch := paramsEqual(currentParams, params)
+	if paramsMatch && hasPath && currentPath == path {
+		return req
 	}
-	return clone
+
+	ctx := req.Context()
+	if !paramsMatch {
+		ctx = context.WithValue(ctx, requestParamsKey, params)
+	}
+	if !hasPath || currentPath != path {
+		ctx = context.WithValue(ctx, requestDispatchKey, path)
+	}
+	if ctx == req.Context() {
+		return req
+	}
+
+	return req.WithContext(ctx)
 }
 
 func ignoreDuplicate(err error) error {
@@ -298,9 +312,25 @@ func ignoreDuplicate(err error) error {
 	return err
 }
 
-type paramsContextKey struct{}
+type requestContextKey int
 
-var requestParamsKey paramsContextKey
+const (
+	requestParamsKey requestContextKey = iota
+	requestDispatchKey
+)
+
+func dispatchState(req *http.Request) (string, match.Params) {
+	path, ok := dispatchPath(req)
+	if !ok {
+		path = req.URL.Path
+	}
+	return path, Params(req)
+}
+
+func dispatchPath(req *http.Request) (string, bool) {
+	path, ok := req.Context().Value(requestDispatchKey).(string)
+	return path, ok
+}
 
 // Params returns the parameters captured while matching req.
 //
@@ -321,6 +351,18 @@ func Params(req *http.Request) RequestParams {
 // values.
 func Param(req *http.Request, name string) string {
 	return Params(req).Get(name)
+}
+
+func paramsEqual(a, b match.Params) bool {
+	if a.Len() != b.Len() {
+		return false
+	}
+	for i := 0; i < a.Len(); i++ {
+		if a.At(i) != b.At(i) {
+			return false
+		}
+	}
+	return true
 }
 
 func mergeParams(base, overlay match.Params) match.Params {

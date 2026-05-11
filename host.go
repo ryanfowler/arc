@@ -1,7 +1,5 @@
 package arc
 
-import "net/http"
-
 // Host registers and returns a child router that matches requests for pattern.
 //
 // Host patterns use the github.com/ryanfowler/match grammar, for example
@@ -21,7 +19,7 @@ func (r *Router) Host(pattern string) *Router {
 	)
 	host := &hostRouter{
 		router:     child,
-		handler:    compose(http.HandlerFunc(child.ServeHTTP), r.middleware),
+		handler:    compose(routerHandler{router: child}, r.middleware),
 		middleware: r.middleware,
 	}
 	if err := r.hostRoutes.TryInsert(normalizeHost(pattern), host); err != nil {

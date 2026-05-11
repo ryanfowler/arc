@@ -1,18 +1,17 @@
 package arc
 
-import (
-	"net/http"
-	"strings"
-)
+import "strings"
 
 // SubRouter registers and returns a child router mounted at pattern.
 //
 // The pattern uses the github.com/ryanfowler/match route grammar. Parameters
 // captured by the mount pattern are available to child handlers.
 //
-// The child receives the remaining path after the mount point. For example, a
-// child mounted at /api receives /users for a request to /api/users, while both
-// /api and /api/ are dispatched to the child's / route.
+// The child matches against the remaining path after the mount point. For
+// example, a child mounted at /api matches /users for a request to /api/users,
+// while both /api and /api/ are dispatched to the child's / route. The request
+// URL is not rewritten; middleware and handlers still see the original
+// req.URL.Path.
 //
 // Middleware already registered on the parent wraps the child router.
 // Middleware added to the child applies only inside the child router.
@@ -24,7 +23,7 @@ func (r *Router) SubRouter(pattern string) *Router {
 
 	sub := &subRouter{
 		router:     child,
-		handler:    compose(http.HandlerFunc(child.ServeHTTP), r.middleware),
+		handler:    compose(routerHandler{router: child}, r.middleware),
 		middleware: r.middleware,
 	}
 

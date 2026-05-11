@@ -333,6 +333,32 @@ func TestSubRouterRunsParentAndChildMiddleware(t *testing.T) {
 	}
 }
 
+func TestSubRouterDoesNotRewriteRequestPath(t *testing.T) {
+	var paths []string
+	r := New()
+	r.Use(pathMiddleware("parent", &paths))
+
+	api := r.SubRouter("/api")
+	api.Use(pathMiddleware("child", &paths))
+	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		paths = append(paths, "handler:"+req.URL.Path)
+		if got := Param(req, "id"); got != "42" {
+			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+	assertStrings(t, paths, []string{
+		"parent:/api/users/42",
+		"child:/api/users/42",
+		"handler:/api/users/42",
+	})
+}
+
 func TestNestedSubRoutersMergeParams(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api/{version}")
@@ -517,6 +543,15 @@ func namedMiddleware(name string, calls *[]string) Middleware {
 			*calls = append(*calls, name+" before")
 			next.ServeHTTP(w, req)
 			*calls = append(*calls, name+" after")
+		})
+	}
+}
+
+func pathMiddleware(name string, paths *[]string) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			*paths = append(*paths, name+":"+req.URL.Path)
+			next.ServeHTTP(w, req)
 		})
 	}
 }
