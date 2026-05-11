@@ -250,6 +250,16 @@ func TestMiddlewareOrder(t *testing.T) {
 	}
 }
 
+func TestUsePanicsForNilMiddleware(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("Use did not panic")
+		}
+	}()
+
+	New().Use(nil)
+}
+
 func TestMiddlewareAppliesOnlyToLaterRegistrations(t *testing.T) {
 	var calls []string
 	r := New()

@@ -136,9 +136,14 @@ func defaultMethodNotAllowed(w http.ResponseWriter, _ *http.Request) {
 // Middleware applies only to routes, subrouters, and host routers registered
 // after the call to Use. This lets callers build separate sections of a router
 // with different middleware stacks. Middleware is executed in the order it is
-// added.
+// added. Use panics if any middleware is nil.
 func (r *Router) Use(mw ...Middleware) {
-	r.middleware = append(r.middleware, mw...)
+	for _, m := range mw {
+		if m == nil {
+			panic("arc: nil middleware")
+		}
+		r.middleware = append(r.middleware, m)
+	}
 }
 
 // ServeHTTP dispatches req to the best matching host router, subrouter, or
@@ -316,6 +321,9 @@ func (m *routeMethods) allowHeader() string {
 
 func compose(h http.Handler, middleware []Middleware) http.Handler {
 	for i := len(middleware) - 1; i >= 0; i-- {
+		if middleware[i] == nil {
+			continue
+		}
 		h = middleware[i](h)
 	}
 	return h
