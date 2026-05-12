@@ -272,6 +272,7 @@ func sameMountSegmentPattern(a, b mountSegment) bool {
 	return a.raw == b.raw &&
 		a.literal == b.literal &&
 		a.catchAll == b.catchAll &&
+		a.name == b.name &&
 		a.prefix == b.prefix &&
 		a.suffix == b.suffix
 }

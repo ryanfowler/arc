@@ -542,6 +542,28 @@ func TestSubRouterBacktracksAcrossParamMounts(t *testing.T) {
 	assertStatus(t, rec, http.StatusCreated)
 }
 
+func TestSubRouterBacktracksAcrossDifferentlyNamedParamMounts(t *testing.T) {
+	r := New()
+	foo := r.SubRouter("/{id}/foo")
+	bar := r.SubRouter("/{name}/bar")
+
+	foo.Get("/", writeStatus(http.StatusAccepted))
+	bar.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "name"); got != "abc" {
+			t.Fatalf("Param(name) = %q, want %q", got, "abc")
+		}
+		if got := Param(req, "id"); got != "" {
+			t.Fatalf("Param(id) = %q, want empty", got)
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/abc/bar", nil))
+
+	assertStatus(t, rec, http.StatusCreated)
+}
+
 func TestHostRouterMatchesAndMergesParams(t *testing.T) {
 	r := New()
 	tenant := r.Host("{tenant}.example.com")
