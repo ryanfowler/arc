@@ -59,6 +59,7 @@ type routeRegistration struct {
 
 type routeMethods struct {
 	methods []string
+	allow   string
 }
 
 type subRouter struct {
@@ -313,10 +314,11 @@ func (m *routeMethods) add(method string) {
 	m.methods = append(m.methods, "")
 	copy(m.methods[i+1:], m.methods[i:])
 	m.methods[i] = method
+	m.allow = strings.Join(m.methods, ", ")
 }
 
 func (m *routeMethods) allowHeader() string {
-	return strings.Join(m.methods, ", ")
+	return m.allow
 }
 
 func compose(h http.Handler, middleware []Middleware) http.Handler {
