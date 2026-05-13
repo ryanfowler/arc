@@ -160,9 +160,9 @@ func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, pa
 		return
 	}
 
-	if methods, _, ok := r.methodRoutes.Match(path); ok {
+	if methods, routeParams, ok := r.methodRoutes.Match(path); ok {
 		w.Header().Set("Allow", methods.allowHeader())
-		r.methodNotAllowed.ServeHTTP(w, requestForHandler(req, params))
+		r.methodNotAllowed.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams)))
 		return
 	}
 

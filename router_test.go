@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/ryanfowler/match"
@@ -129,6 +130,34 @@ func TestRouterMethodNotAllowedAllowHeaderWithCustomHandler(t *testing.T) {
 	}
 }
 
+func TestRouterMethodNotAllowedPassesRouteParams(t *testing.T) {
+	r := New(WithMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "id"); got != "42" {
+			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		}
+		w.WriteHeader(http.StatusConflict)
+	})))
+	r.Get("/users/{id}", writeStatus(http.StatusNoContent))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/users/42", nil))
+
+	assertStatus(t, rec, http.StatusConflict)
+}
+
+func TestRouterHeadDoesNotImplicitlyUseGetRoute(t *testing.T) {
+	r := New()
+	r.Get("/resource", writeStatus(http.StatusNoContent))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/resource", nil))
+
+	assertStatus(t, rec, http.StatusMethodNotAllowed)
+	if got := rec.Header().Get("Allow"); got != http.MethodGet {
+		t.Fatalf("Allow = %q, want %q", got, http.MethodGet)
+	}
+}
+
 func TestMethodHelpers(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -173,6 +202,19 @@ func TestOptionsConfigureFallbackHandlers(t *testing.T) {
 	assertStatus(t, methodNotAllowed, http.StatusConflict)
 }
 
+func TestOptionsIgnoreNilFallbackHandlers(t *testing.T) {
+	r := New(WithNotFound(nil), WithMethodNotAllowed(nil))
+	r.Get("/known", writeStatus(http.StatusNoContent))
+
+	notFound := httptest.NewRecorder()
+	r.ServeHTTP(notFound, httptest.NewRequest(http.MethodGet, "/missing", nil))
+	assertStatus(t, notFound, http.StatusNotFound)
+
+	methodNotAllowed := httptest.NewRecorder()
+	r.ServeHTTP(methodNotAllowed, httptest.NewRequest(http.MethodPost, "/known", nil))
+	assertStatus(t, methodNotAllowed, http.StatusMethodNotAllowed)
+}
+
 func TestHandleErrReturnsMatchErrors(t *testing.T) {
 	r := New()
 	if err := r.HandleErr(http.MethodGet, "/users/{}", writeStatus(http.StatusNoContent)); !errors.Is(err, match.ErrInvalidParam) {
@@ -206,6 +248,30 @@ func TestHandleErrDoesNotPartiallyRegisterFailedRoute(t *testing.T) {
 	assertStatus(t, rec, http.StatusMethodNotAllowed)
 	if got := rec.Header().Get("Allow"); got != http.MethodGet {
 		t.Fatalf("Allow = %q, want %q", got, http.MethodGet)
+	}
+}
+
+func TestHandleErrDuplicateDoesNotCorruptRouteTables(t *testing.T) {
+	r := New()
+	if err := r.HandleErr(http.MethodGet, "/resource", writeStatus(http.StatusNoContent)); err != nil {
+		t.Fatalf("HandleErr valid route error = %v", err)
+	}
+	if err := r.HandleErr(http.MethodGet, "/resource", writeStatus(http.StatusAccepted)); err == nil {
+		t.Fatal("HandleErr duplicate route error = nil, want error")
+	}
+	if err := r.HandleErr(http.MethodPost, "/resource", writeStatus(http.StatusCreated)); err != nil {
+		t.Fatalf("HandleErr post route error = %v", err)
+	}
+
+	get := httptest.NewRecorder()
+	r.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/resource", nil))
+	assertStatus(t, get, http.StatusNoContent)
+
+	put := httptest.NewRecorder()
+	r.ServeHTTP(put, httptest.NewRequest(http.MethodPut, "/resource", nil))
+	assertStatus(t, put, http.StatusMethodNotAllowed)
+	if got, want := put.Header().Get("Allow"), "GET, POST"; got != want {
+		t.Fatalf("Allow = %q, want %q", got, want)
 	}
 }
 
@@ -397,6 +463,36 @@ func TestSubRouterReturnsChildNotFoundAndMethodNotAllowed(t *testing.T) {
 	assertStatus(t, methodNotAllowed, http.StatusConflict)
 }
 
+func TestSubRouterFallbacksReceiveMergedParams(t *testing.T) {
+	r := New(
+		WithNotFound(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if got := Param(req, "version"); got != "v1" {
+				t.Fatalf("not found Param(version) = %q, want %q", got, "v1")
+			}
+			w.WriteHeader(http.StatusTeapot)
+		})),
+		WithMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if got := Param(req, "version"); got != "v1" {
+				t.Fatalf("method not allowed Param(version) = %q, want %q", got, "v1")
+			}
+			if got := Param(req, "id"); got != "42" {
+				t.Fatalf("method not allowed Param(id) = %q, want %q", got, "42")
+			}
+			w.WriteHeader(http.StatusConflict)
+		})),
+	)
+	api := r.SubRouter("/api/{version}")
+	api.Get("/users/{id}", writeStatus(http.StatusNoContent))
+
+	notFound := httptest.NewRecorder()
+	r.ServeHTTP(notFound, httptest.NewRequest(http.MethodGet, "/api/v1/missing", nil))
+	assertStatus(t, notFound, http.StatusTeapot)
+
+	methodNotAllowed := httptest.NewRecorder()
+	r.ServeHTTP(methodNotAllowed, httptest.NewRequest(http.MethodPost, "/api/v1/users/42", nil))
+	assertStatus(t, methodNotAllowed, http.StatusConflict)
+}
+
 func TestRootSubRouterMatchesAllPaths(t *testing.T) {
 	r := New()
 	root := r.SubRouter("/")
@@ -409,6 +505,28 @@ func TestRootSubRouterMatchesAllPaths(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestSubRouterEmptyMountMatchesRoot(t *testing.T) {
+	r := New()
+	root := r.SubRouter("")
+	root.Get("/healthz", writeStatus(http.StatusNoContent))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func TestSubRouterTrailingSlashMountIsCleaned(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api///")
+	api.Get("/users/{id}", writeStatus(http.StatusAccepted))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/users/42", nil))
 
 	assertStatus(t, rec, http.StatusAccepted)
 }
@@ -441,6 +559,21 @@ func TestSubRouterRunsParentAndChildMiddleware(t *testing.T) {
 			t.Fatalf("calls = %#v, want %#v", calls, want)
 		}
 	}
+}
+
+func TestSubRouterSnapshotsParentMiddlewareAtRegistration(t *testing.T) {
+	var calls []string
+	r := New()
+	r.Use(namedMiddleware("before", &calls))
+	api := r.SubRouter("/api")
+	r.Use(namedMiddleware("after", &calls))
+	api.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		calls = append(calls, "handler")
+	})
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api", nil))
+
+	assertStrings(t, calls, []string{"before before", "handler", "before after"})
 }
 
 func TestSubRouterDoesNotRewriteRequestPath(t *testing.T) {
@@ -493,6 +626,36 @@ func TestNestedSubRoutersMergeParams(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestSubRouterCatchAllMount(t *testing.T) {
+	r := New()
+	files := r.SubRouter("/files/{*path}")
+	files.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "path"); got != "css/app.css" {
+			t.Fatalf("Param(path) = %q, want %q", got, "css/app.css")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/files/css/app.css", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestSubRouterCatchAllMountRejectsEmptyRemainder(t *testing.T) {
+	r := New()
+	files := r.SubRouter("/files/{*path}")
+	files.Get("/", writeStatus(http.StatusAccepted))
+
+	for _, path := range []string{"/files", "/files/"} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			assertStatus(t, rec, http.StatusNotFound)
+		})
+	}
+}
+
 func TestSubRouterChoosesLongestMount(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api")
@@ -505,6 +668,19 @@ func TestSubRouterChoosesLongestMount(t *testing.T) {
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/users/42", nil))
 
 	assertStatus(t, rec, http.StatusCreated)
+}
+
+func TestSubRouterUsesStaticIndexAfterManyStaticMounts(t *testing.T) {
+	r := New()
+	for _, mount := range []string{"/a", "/b", "/c", "/d", "/e", "/f"} {
+		sub := r.SubRouter(mount)
+		sub.Get("/", writeStatus(http.StatusNoContent))
+	}
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/f", nil))
+
+	assertStatus(t, rec, http.StatusNoContent)
 }
 
 func TestSubRouterMountWithSegmentAffixes(t *testing.T) {
@@ -521,6 +697,19 @@ func TestSubRouterMountWithSegmentAffixes(t *testing.T) {
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1.json/users/42", nil))
 
 	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestSubRouterRejectsAmbiguousMounts(t *testing.T) {
+	r := New()
+	r.SubRouter("/api/{name}.json")
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("SubRouter did not panic")
+		}
+	}()
+
+	r.SubRouter("/api/v{version}.json")
 }
 
 func TestSubRouterBacktracksAcrossParamMounts(t *testing.T) {
@@ -613,6 +802,33 @@ func TestHostRouterFallsThroughToRootWhenHostDoesNotMatch(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestHostRouterFallsThroughToRootWhenHostIsEmpty(t *testing.T) {
+	r := New()
+	api := r.Host("api.example.com")
+	api.Get("/", writeStatus(http.StatusNoContent))
+	r.Get("/", writeStatus(http.StatusAccepted))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = ""
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestHostRouterNormalizesIPv6HostWithPort(t *testing.T) {
+	r := New()
+	local := r.Host("::1")
+	local.Get("/", writeStatus(http.StatusAccepted))
+
+	req := httptest.NewRequest(http.MethodGet, "http://[::1]/", nil)
+	req.Host = "[::1]:8080"
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestHostRouterRunsParentAndChildMiddleware(t *testing.T) {
 	var calls []string
 	r := New()
@@ -642,6 +858,21 @@ func TestHostRouterRunsParentAndChildMiddleware(t *testing.T) {
 			t.Fatalf("calls = %#v, want %#v", calls, want)
 		}
 	}
+}
+
+func TestHostRouterSnapshotsParentMiddlewareAtRegistration(t *testing.T) {
+	var calls []string
+	r := New()
+	r.Use(namedMiddleware("before", &calls))
+	api := r.Host("api.example.com")
+	r.Use(namedMiddleware("after", &calls))
+	api.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		calls = append(calls, "handler")
+	})
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil))
+
+	assertStrings(t, calls, []string{"before before", "handler", "before after"})
 }
 
 func TestParamsReturnsRequestParams(t *testing.T) {
@@ -691,6 +922,37 @@ func TestParamMergePrecedence(t *testing.T) {
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://host.example.com/sub/route", nil))
 
 	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestRouterServesConcurrentRequestsAfterRegistration(t *testing.T) {
+	r := New()
+	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "id"); got == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	var wg sync.WaitGroup
+	statuses := make(chan int, 32)
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/users/42", nil))
+			statuses <- rec.Code
+		}()
+	}
+	wg.Wait()
+	close(statuses)
+
+	for got := range statuses {
+		if got != http.StatusNoContent {
+			t.Fatalf("status = %d, want %d", got, http.StatusNoContent)
+		}
+	}
 }
 
 func writeStatus(status int) http.HandlerFunc {
