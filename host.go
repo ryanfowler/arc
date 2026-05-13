@@ -13,18 +13,10 @@ package arc
 // Middleware already registered on the parent wraps the host router.
 // Middleware added to the returned router applies only inside that host router.
 func (r *Router) Host(pattern string) *Router {
-	child := New(
-		WithNotFound(r.notFound),
-		WithMethodNotAllowed(r.methodNotAllowed),
-	)
-	host := &hostRouter{
-		router:     child,
-		handler:    compose(routerHandler{router: child}, r.middleware),
-		middleware: r.middleware,
-	}
-	if err := r.hostRoutes.TryInsert(normalizeHost(pattern), host); err != nil {
+	child := newChildRouter(r)
+	if err := r.hostRoutes.TryInsert(normalizeHost(pattern), child); err != nil {
 		panic(err)
 	}
 	r.hasHosts = true
-	return child
+	return child.router
 }

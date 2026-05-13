@@ -37,7 +37,7 @@ type Router struct {
 	methodRoutes       match.Router[*routeMethods]
 	routeMethods       map[string]*routeMethods
 	subMounts          mountMatcher
-	hostRoutes         match.Router[*hostRouter]
+	hostRoutes         match.Router[*childRouter]
 	hasHosts           bool
 	hasSubRouters      bool
 
@@ -62,16 +62,9 @@ type routeMethods struct {
 	allow   string
 }
 
-type subRouter struct {
-	router     *Router
-	handler    http.Handler
-	middleware []Middleware
-}
-
-type hostRouter struct {
-	router     *Router
-	handler    http.Handler
-	middleware []Middleware
+type childRouter struct {
+	router  *Router
+	handler http.Handler
 }
 
 type routerHandler struct {
@@ -186,18 +179,12 @@ func (r *Router) serveHost(w http.ResponseWriter, req *http.Request, path string
 		return false
 	}
 
-	router, hostParams, ok := r.hostRoutes.Match(host)
+	child, hostParams, ok := r.hostRoutes.Match(host)
 	if !ok {
 		return false
 	}
 
-	nextParams := mergeParams(params, hostParams)
-	if len(router.middleware) > 0 {
-		router.handler.ServeHTTP(w, requestForRouter(req, path, nextParams))
-		return true
-	}
-
-	router.router.serve(w, req, path, nextParams)
+	child.serve(w, req, path, mergeParams(params, hostParams))
 	return true
 }
 
@@ -206,18 +193,12 @@ func (r *Router) serveSubRouter(w http.ResponseWriter, req *http.Request, path s
 		return false
 	}
 
-	sub, nextPath, subParams, ok := r.subMounts.Match(path)
+	child, nextPath, subParams, ok := r.subMounts.Match(path)
 	if !ok {
 		return false
 	}
 
-	nextParams := mergeParams(params, subParams)
-	if len(sub.middleware) > 0 {
-		sub.handler.ServeHTTP(w, requestForRouter(req, nextPath, nextParams))
-		return true
-	}
-
-	sub.router.serve(w, req, nextPath, nextParams)
+	child.serve(w, req, nextPath, mergeParams(params, subParams))
 	return true
 }
 
@@ -329,6 +310,26 @@ func compose(h http.Handler, middleware []Middleware) http.Handler {
 		h = middleware[i](h)
 	}
 	return h
+}
+
+func newChildRouter(parent *Router) *childRouter {
+	r := New(
+		WithNotFound(parent.notFound),
+		WithMethodNotAllowed(parent.methodNotAllowed),
+	)
+	child := &childRouter{router: r}
+	if len(parent.middleware) > 0 {
+		child.handler = compose(routerHandler{router: r}, parent.middleware)
+	}
+	return child
+}
+
+func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path string, params match.Params) {
+	if c.handler != nil {
+		c.handler.ServeHTTP(w, requestForRouter(req, path, params))
+		return
+	}
+	c.router.serve(w, req, path, params)
 }
 
 func normalizeHost(host string) string {

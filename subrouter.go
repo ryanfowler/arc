@@ -20,45 +20,36 @@ import (
 // Middleware already registered on the parent wraps the child router.
 // Middleware added to the child applies only inside the child router.
 func (r *Router) SubRouter(pattern string) *Router {
-	child := New(
-		WithNotFound(r.notFound),
-		WithMethodNotAllowed(r.methodNotAllowed),
-	)
+	child := newChildRouter(r)
 
-	sub := &subRouter{
-		router:     child,
-		handler:    compose(routerHandler{router: child}, r.middleware),
-		middleware: r.middleware,
-	}
-
-	if err := r.subMounts.TryInsert(pattern, sub); err != nil {
+	if err := r.subMounts.TryInsert(pattern, child); err != nil {
 		panic(err)
 	}
 
 	r.hasSubRouters = true
-	return child
+	return child.router
 }
 
 type mountMatcher struct {
-	validate match.Router[*subRouter]
+	validate match.Router[*childRouter]
 	root     mountNode
 }
 
-func (m *mountMatcher) TryInsert(pattern string, sub *subRouter) error {
+func (m *mountMatcher) TryInsert(pattern string, child *childRouter) error {
 	pattern = cleanMountPattern(pattern)
-	if err := m.validate.TryInsert(pattern, sub); err != nil {
-		return err
-	}
-
 	segments, err := parseMountPattern(pattern)
 	if err != nil {
 		return err
 	}
-	m.root.insert(segments, sub)
+	if err := m.validate.TryInsert(pattern, child); err != nil {
+		return err
+	}
+
+	m.root.insert(segments, child)
 	return nil
 }
 
-func (m *mountMatcher) Match(path string) (*subRouter, string, match.Params, bool) {
+func (m *mountMatcher) Match(path string) (*childRouter, string, match.Params, bool) {
 	return m.root.match(path)
 }
 
@@ -76,7 +67,7 @@ func cleanMountPattern(pattern string) string {
 }
 
 type mountNode struct {
-	sub         *subRouter
+	child       *childRouter
 	static      []mountStaticEdge
 	staticIndex map[string]*mountNode
 	params      []mountParamEdge
@@ -95,7 +86,7 @@ type mountParamEdge struct {
 
 type mountCatchAllEdge struct {
 	pattern mountSegment
-	sub     *subRouter
+	child   *childRouter
 }
 
 type mountSegment struct {
@@ -107,14 +98,14 @@ type mountSegment struct {
 	suffix   string
 }
 
-func (n *mountNode) insert(segments []mountSegment, sub *subRouter) {
+func (n *mountNode) insert(segments []mountSegment, router *childRouter) {
 	current := n
 	for i := range segments {
 		segment := segments[i]
 		if segment.catchAll {
 			current.catchAll = append(current.catchAll, mountCatchAllEdge{
 				pattern: segment,
-				sub:     sub,
+				child:   router,
 			})
 			return
 		}
@@ -145,31 +136,31 @@ func (n *mountNode) insert(segments []mountSegment, sub *subRouter) {
 			current = child
 		}
 	}
-	current.sub = sub
+	current.child = router
 }
 
 type mountMatch struct {
-	sub       *subRouter
+	child     *childRouter
 	nextIndex int
 	consumed  int
 	params    match.Params
 }
 
-func (n *mountNode) match(path string) (*subRouter, string, match.Params, bool) {
+func (n *mountNode) match(path string) (*childRouter, string, match.Params, bool) {
 	var inline [4]match.Param
 	captures := inline[:0]
 	best, ok := n.matchPath(path, mountMatchStart(path), captures)
 	if !ok {
 		return nil, "", match.Params{}, false
 	}
-	return best.sub, remainingMountPath(path, best.nextIndex), best.params, true
+	return best.child, remainingMountPath(path, best.nextIndex), best.params, true
 }
 
 func (n *mountNode) matchPath(path string, index int, captures []match.Param) (mountMatch, bool) {
 	var best mountMatch
-	if n.sub != nil {
+	if n.child != nil {
 		best = mountMatch{
-			sub:       n.sub,
+			child:     n.child,
 			nextIndex: index,
 			consumed:  consumedMountPath(path, index),
 			params:    match.ParamsOf(captures...),
@@ -202,7 +193,7 @@ func (n *mountNode) matchPath(path string, index int, captures []match.Param) (m
 			}
 			nextCaptures := appendMountParam(captures, edge.pattern.name, path[index+len(edge.pattern.prefix):])
 			candidate := mountMatch{
-				sub:       edge.sub,
+				child:     edge.child,
 				nextIndex: -1,
 				consumed:  len(path) + 1,
 				params:    match.ParamsOf(nextCaptures...),
@@ -211,11 +202,11 @@ func (n *mountNode) matchPath(path string, index int, captures []match.Param) (m
 		}
 	}
 
-	return best, best.sub != nil
+	return best, best.child != nil
 }
 
 func betterMountMatch(best, candidate mountMatch) mountMatch {
-	if best.sub == nil || candidate.consumed > best.consumed {
+	if best.child == nil || candidate.consumed > best.consumed {
 		return candidate
 	}
 	return best
