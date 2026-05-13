@@ -315,10 +315,7 @@ func nextMountPathSegment(path string, index int) (string, int) {
 	if index == len(path) {
 		return "", -1
 	}
-	end := index + 16
-	if end > len(path) {
-		end = len(path)
-	}
+	end := min(index+16, len(path))
 	for i := index; i < end; i++ {
 		if path[i] == '/' {
 			return path[index:i], i + 1
@@ -441,8 +438,8 @@ func parseMountParamName(segment string, index int) (string, bool, int, error) {
 				continue
 			}
 			raw := name.String()
-			if strings.HasPrefix(raw, "*") {
-				return strings.TrimPrefix(raw, "*"), true, i + 1, nil
+			if after, ok := strings.CutPrefix(raw, "*"); ok {
+				return after, true, i + 1, nil
 			}
 			return raw, false, i + 1, nil
 		default:

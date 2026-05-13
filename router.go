@@ -458,7 +458,7 @@ func mergeParamsWithOverride(base, overlay match.Params, conflict int) match.Par
 	}
 
 	filtered := make([]match.Param, 0, base.Len()-1)
-	for i := 0; i < conflict; i++ {
+	for i := range conflict {
 		filtered = append(filtered, base.At(i))
 	}
 	for i := conflict + 1; i < base.Len(); i++ {
