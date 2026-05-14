@@ -72,6 +72,15 @@ Exact route matches still take precedence when strict slash matching is
 disabled. If both `/users/{id}` and `/users/{id}/` are registered, a request for
 `/users/42/` uses the explicit trailing-slash route.
 
+GET routes handle HEAD requests by default when no explicit HEAD route matches.
+Disable that when you need strict method matching:
+
+```go
+r := arc.New()
+r.SetImplicitHead(false)
+r.Get("/users/{id}", getUser) // HEAD /users/42 returns 405 unless Head is registered
+```
+
 ### Path Matching Details
 
 `arc` matches against `req.URL.Path` as parsed by `net/http`. It does not match
@@ -159,14 +168,15 @@ Use router setters for routing behavior that should apply consistently:
 ```go
 r := arc.New()
 r.SetStrictSlash(false)
+r.SetImplicitHead(false)
 r.SetRequestPathValues(true)
 ```
 
 Subrouters and host routers snapshot parent settings when they are created.
-Calls to `SetStrictSlash`, `SetRequestPathValues`, `SetNotFound`, or
-`SetMethodNotAllowed` after creating a child do not affect that existing child.
-Call those setters before `SubRouter` or `Host` when you want a child to start
-with the same behavior.
+Calls to `SetStrictSlash`, `SetImplicitHead`, `SetRequestPathValues`,
+`SetNotFound`, or `SetMethodNotAllowed` after creating a child do not affect
+that existing child. Call those setters before `SubRouter` or `Host` when you
+want a child to start with the same behavior.
 
 Middleware follows the same registration-order model: `Use` only wraps routes,
 subrouters, and host routers registered after the call.
@@ -236,7 +246,8 @@ subrouters and routes.
 
 By default, unmatched requests use `http.NotFoundHandler`, and paths registered
 for a different method receive status `405 Method Not Allowed` with an `Allow`
-header listing the registered methods.
+header listing the effective methods. When implicit HEAD matching is enabled,
+`Allow` includes `HEAD` for paths with a `GET` route.
 
 You can customize both:
 

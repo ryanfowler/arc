@@ -47,6 +47,7 @@ type Router struct {
 	methodNotAllowed http.Handler
 
 	strictSlash       bool
+	implicitHead      bool
 	requestPathValues bool
 	patternPrefix     string
 }
@@ -64,9 +65,10 @@ type routeRegistration struct {
 }
 
 type routeMethods struct {
-	methods []string
-	allow   string
-	pattern string
+	methods           []string
+	allow             string
+	allowImplicitHead string
+	pattern           string
 }
 
 type childRouter struct {
@@ -89,6 +91,7 @@ func (h routerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 //
 // By default, unmatched requests use http.NotFoundHandler and requests whose
 // path matches a route registered for a different method receive status 405.
+// GET routes also handle HEAD requests unless an explicit HEAD route matches.
 //
 // Child routers and host routers copy the parent router's current settings when
 // they are created.
@@ -99,6 +102,7 @@ func New() *Router {
 		notFound:         http.NotFoundHandler(),
 		methodNotAllowed: http.HandlerFunc(defaultMethodNotAllowed),
 		strictSlash:      true,
+		implicitHead:     true,
 	}
 }
 
@@ -121,6 +125,15 @@ func (r *Router) SetMethodNotAllowed(h http.Handler) {
 	if h != nil {
 		r.methodNotAllowed = h
 	}
+}
+
+// SetImplicitHead configures whether HEAD requests may use GET routes when no
+// explicit HEAD route matches.
+//
+// Implicit HEAD matching is enabled by default. Explicit HEAD routes always take
+// precedence when present.
+func (r *Router) SetImplicitHead(enabled bool) {
+	r.implicitHead = enabled
 }
 
 // SetStrictSlash configures whether route matching treats a trailing slash as
@@ -193,7 +206,7 @@ func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, pa
 	}
 
 	if methods, routeParams, ok := r.matchMethodRoute(path); ok {
-		w.Header().Set("Allow", methods.allowHeader())
+		w.Header().Set("Allow", methods.allowHeader(r.implicitHead))
 		r.methodNotAllowed.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams), methods.pattern, r.requestPathValues))
 		return
 	}
@@ -235,7 +248,17 @@ func (r *Router) serveSubRouter(w http.ResponseWriter, req *http.Request, path s
 }
 
 func (r *Router) serveRoute(w http.ResponseWriter, req *http.Request, path string, params match.Params) bool {
-	routes := r.routes[req.Method]
+	if r.serveMethodRoute(w, req, path, params, req.Method) {
+		return true
+	}
+	if req.Method == http.MethodHead && r.implicitHead {
+		return r.serveMethodRoute(w, req, path, params, http.MethodGet)
+	}
+	return false
+}
+
+func (r *Router) serveMethodRoute(w http.ResponseWriter, req *http.Request, path string, params match.Params, method string) bool {
+	routes := r.routes[method]
 	if routes == nil {
 		return false
 	}
@@ -384,11 +407,35 @@ func (m *routeMethods) add(method string) {
 	m.methods = append(m.methods, "")
 	copy(m.methods[i+1:], m.methods[i:])
 	m.methods[i] = method
-	m.allow = strings.Join(m.methods, ", ")
+	m.updateAllowHeaders()
 }
 
-func (m *routeMethods) allowHeader() string {
+func (m *routeMethods) updateAllowHeaders() {
+	m.allow = strings.Join(m.methods, ", ")
+	m.allowImplicitHead = m.allow
+
+	if !m.has(http.MethodGet) || m.has(http.MethodHead) {
+		return
+	}
+
+	i := sort.SearchStrings(m.methods, http.MethodHead)
+	methods := make([]string, len(m.methods)+1)
+	copy(methods, m.methods[:i])
+	methods[i] = http.MethodHead
+	copy(methods[i+1:], m.methods[i:])
+	m.allowImplicitHead = strings.Join(methods, ", ")
+}
+
+func (m *routeMethods) allowHeader(implicitHead bool) string {
+	if implicitHead {
+		return m.allowImplicitHead
+	}
 	return m.allow
+}
+
+func (m *routeMethods) has(method string) bool {
+	i := sort.SearchStrings(m.methods, method)
+	return i < len(m.methods) && m.methods[i] == method
 }
 
 func compose(h http.Handler, middleware []Middleware) http.Handler {
@@ -406,6 +453,7 @@ func newChildRouter(parent *Router) *childRouter {
 	r.SetNotFound(parent.notFound)
 	r.SetMethodNotAllowed(parent.methodNotAllowed)
 	r.SetStrictSlash(parent.strictSlash)
+	r.SetImplicitHead(parent.implicitHead)
 	r.SetRequestPathValues(parent.requestPathValues)
 	r.patternPrefix = parent.patternPrefix
 	child := &childRouter{router: r}

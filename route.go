@@ -58,7 +58,8 @@ func (r *Router) HandleFunc(method, pattern string, h http.HandlerFunc) {
 	r.Handle(method, pattern, h)
 }
 
-// Get registers h for GET requests matching pattern.
+// Get registers h for GET requests matching pattern. By default, the route also
+// handles HEAD requests when no explicit HEAD route matches.
 func (r *Router) Get(pattern string, h http.HandlerFunc) {
 	r.HandleFunc(http.MethodGet, pattern, h)
 }

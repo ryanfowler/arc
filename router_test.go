@@ -188,8 +188,8 @@ func TestRouterRelaxedSlashReturnsMethodNotAllowed(t *testing.T) {
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/users/42/", nil))
 
 	assertStatus(t, rec, http.StatusConflict)
-	if got := rec.Header().Get("Allow"); got != http.MethodGet {
-		t.Fatalf("Allow = %q, want %q", got, http.MethodGet)
+	if got, want := rec.Header().Get("Allow"), "GET, HEAD"; got != want {
+		t.Fatalf("Allow = %q, want %q", got, want)
 	}
 }
 
@@ -213,8 +213,8 @@ func TestRouterReturnsMethodNotAllowed(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 	}
-	if got := rec.Header().Get("Allow"); got != http.MethodGet {
-		t.Fatalf("Allow = %q, want %q", got, http.MethodGet)
+	if got, want := rec.Header().Get("Allow"), "GET, HEAD"; got != want {
+		t.Fatalf("Allow = %q, want %q", got, want)
 	}
 }
 
@@ -251,7 +251,7 @@ func TestRouterMethodNotAllowedAllowHeaderIncludesRegisteredMethods(t *testing.T
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/resource/42", nil))
 
 	assertStatus(t, rec, http.StatusMethodNotAllowed)
-	if got, want := rec.Header().Get("Allow"), "DELETE, GET, POST"; got != want {
+	if got, want := rec.Header().Get("Allow"), "DELETE, GET, HEAD, POST"; got != want {
 		t.Fatalf("Allow = %q, want %q", got, want)
 	}
 }
@@ -266,7 +266,22 @@ func TestRouterMethodNotAllowedAllowHeaderWithCustomHandler(t *testing.T) {
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/known", nil))
 
 	assertStatus(t, rec, http.StatusConflict)
-	if got, want := rec.Header().Get("Allow"), "GET, PATCH"; got != want {
+	if got, want := rec.Header().Get("Allow"), "GET, HEAD, PATCH"; got != want {
+		t.Fatalf("Allow = %q, want %q", got, want)
+	}
+}
+
+func TestRouterMethodNotAllowedAllowHeaderDoesNotDuplicateExplicitHead(t *testing.T) {
+	r := New()
+	r.Get("/known", writeStatus(http.StatusNoContent))
+	r.Head("/known", writeStatus(http.StatusNoContent))
+	r.Post("/known", writeStatus(http.StatusCreated))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/known", nil))
+
+	assertStatus(t, rec, http.StatusMethodNotAllowed)
+	if got, want := rec.Header().Get("Allow"), "GET, HEAD, POST"; got != want {
 		t.Fatalf("Allow = %q, want %q", got, want)
 	}
 }
@@ -287,8 +302,35 @@ func TestRouterMethodNotAllowedPassesRouteParams(t *testing.T) {
 	assertStatus(t, rec, http.StatusConflict)
 }
 
-func TestRouterHeadDoesNotImplicitlyUseGetRoute(t *testing.T) {
+func TestRouterImplicitHeadUsesGetRoute(t *testing.T) {
 	r := New()
+	r.Get("/resource", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.Method; got != http.MethodHead {
+			t.Fatalf("req.Method = %q, want %q", got, http.MethodHead)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/resource", nil))
+
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func TestRouterExplicitHeadWinsOverImplicitGet(t *testing.T) {
+	r := New()
+	r.Get("/resource", writeStatus(http.StatusAccepted))
+	r.Head("/resource", writeStatus(http.StatusNoContent))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/resource", nil))
+
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func TestRouterSetImplicitHeadFalseRequiresExplicitHeadRoute(t *testing.T) {
+	r := New()
+	r.SetImplicitHead(false)
 	r.Get("/resource", writeStatus(http.StatusNoContent))
 
 	rec := httptest.NewRecorder()
@@ -298,6 +340,42 @@ func TestRouterHeadDoesNotImplicitlyUseGetRoute(t *testing.T) {
 	if got := rec.Header().Get("Allow"); got != http.MethodGet {
 		t.Fatalf("Allow = %q, want %q", got, http.MethodGet)
 	}
+}
+
+func TestSubRouterInheritsImplicitHeadSetting(t *testing.T) {
+	r := New()
+	r.SetImplicitHead(false)
+	api := r.SubRouter("/api")
+	api.Get("/resource", writeStatus(http.StatusNoContent))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/api/resource", nil))
+
+	assertStatus(t, rec, http.StatusMethodNotAllowed)
+}
+
+func TestSubRouterSnapshotsImplicitHeadSetting(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api")
+	r.SetImplicitHead(false)
+	api.Get("/resource", writeStatus(http.StatusNoContent))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/api/resource", nil))
+
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func TestHostRouterInheritsImplicitHeadSetting(t *testing.T) {
+	r := New()
+	r.SetImplicitHead(false)
+	api := r.Host("api.example.com")
+	api.Get("/resource", writeStatus(http.StatusNoContent))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "http://api.example.com/resource", nil))
+
+	assertStatus(t, rec, http.StatusMethodNotAllowed)
 }
 
 func TestMethodHelpers(t *testing.T) {
@@ -389,8 +467,8 @@ func TestHandleErrDoesNotPartiallyRegisterFailedRoute(t *testing.T) {
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/users/42", nil))
 
 	assertStatus(t, rec, http.StatusMethodNotAllowed)
-	if got := rec.Header().Get("Allow"); got != http.MethodGet {
-		t.Fatalf("Allow = %q, want %q", got, http.MethodGet)
+	if got, want := rec.Header().Get("Allow"), "GET, HEAD"; got != want {
+		t.Fatalf("Allow = %q, want %q", got, want)
 	}
 }
 
@@ -413,7 +491,7 @@ func TestHandleErrDuplicateDoesNotCorruptRouteTables(t *testing.T) {
 	put := httptest.NewRecorder()
 	r.ServeHTTP(put, httptest.NewRequest(http.MethodPut, "/resource", nil))
 	assertStatus(t, put, http.StatusMethodNotAllowed)
-	if got, want := put.Header().Get("Allow"), "GET, POST"; got != want {
+	if got, want := put.Header().Get("Allow"), "GET, HEAD, POST"; got != want {
 		t.Fatalf("Allow = %q, want %q", got, want)
 	}
 }
