@@ -48,6 +48,7 @@ type Router struct {
 
 	strictSlash       bool
 	requestPathValues bool
+	patternPrefix     string
 }
 
 type route struct {
@@ -56,9 +57,10 @@ type route struct {
 }
 
 type routeRegistration struct {
-	method  string
-	pattern string
-	route   *route
+	method      string
+	pattern     string
+	fullPattern string
+	route       *route
 }
 
 type routeMethods struct {
@@ -275,6 +277,22 @@ func routePatternEndsInSlash(pattern string) bool {
 	return len(pattern) > 0 && pattern[len(pattern)-1] == '/'
 }
 
+func joinPatterns(prefix, pattern string) string {
+	if prefix == "" || prefix == "/" {
+		return pattern
+	}
+	if pattern == "" {
+		return prefix
+	}
+	if pattern == "/" {
+		return prefix + "/"
+	}
+	if pattern[0] == '/' {
+		return prefix + pattern
+	}
+	return prefix + "/" + pattern
+}
+
 func (r *Router) insertMethodRoute(reg routeRegistration) error {
 	routes := r.routes[reg.method]
 	if routes != nil {
@@ -316,7 +334,7 @@ func buildRouteTables(registrations []routeRegistration) (map[string]*match.Rout
 
 		methods := methodsByPattern[reg.pattern]
 		if methods == nil {
-			methods = &routeMethods{pattern: reg.pattern}
+			methods = &routeMethods{pattern: reg.fullPattern}
 			if err := methodRoutes.TryInsert(reg.pattern, methods); err != nil {
 				return nil, match.Router[*routeMethods]{}, nil, err
 			}
@@ -335,7 +353,7 @@ func (r *Router) addRouteMethod(pattern, method string) (*routeMethods, error) {
 		return methods, nil
 	}
 
-	methods = &routeMethods{pattern: pattern}
+	methods = &routeMethods{pattern: joinPatterns(r.patternPrefix, pattern)}
 	if err := r.methodRoutes.TryInsert(pattern, methods); err != nil {
 		return nil, err
 	}
@@ -376,6 +394,7 @@ func newChildRouter(parent *Router) *childRouter {
 	r.SetMethodNotAllowed(parent.methodNotAllowed)
 	r.SetStrictSlash(parent.strictSlash)
 	r.SetRequestPathValues(parent.requestPathValues)
+	r.patternPrefix = parent.patternPrefix
 	child := &childRouter{router: r}
 	if len(parent.middleware) > 0 {
 		child.handler = compose(routerHandler{router: r}, parent.middleware)

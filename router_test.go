@@ -924,6 +924,25 @@ func TestMountDispatchesHandlerWithRemainingPathAndParams(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestMountPatternIncludesSubRouterPatterns(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api/{version}")
+	api.Mount("/tenants/{tenant}/assets", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if got := req.Pattern; got != "/api/{version}/tenants/{tenant}/assets" {
+			t.Fatalf("req.Pattern = %q, want %q", got, "/api/{version}/tenants/{tenant}/assets")
+		}
+		if got := req.URL.Path; got != "/css/app.css" {
+			t.Fatalf("req.URL.Path = %q, want %q", got, "/css/app.css")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme/assets/css/app.css", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestMountRootPaths(t *testing.T) {
 	for _, path := range []string{"/assets", "/assets/"} {
 		t.Run(path, func(t *testing.T) {
@@ -1242,6 +1261,23 @@ func TestRequestPatternSetForParameterizedRoute(t *testing.T) {
 	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/42", nil))
 }
 
+func TestRequestPatternIncludesSubRouterPatterns(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api/{version}")
+	accounts := api.SubRouter("/accounts/{account}")
+	accounts.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.Pattern; got != "/api/{version}/accounts/{account}/users/{id}" {
+			t.Fatalf("req.Pattern = %q, want %q", got, "/api/{version}/accounts/{account}/users/{id}")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/accounts/acme/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestRequestPatternVisibleToRouteMiddleware(t *testing.T) {
 	r := New()
 	r.Use(func(next http.Handler) http.Handler {
@@ -1262,6 +1298,27 @@ func TestRequestPatternVisibleToRouteMiddleware(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestRequestPatternVisibleToSubRouterRouteMiddleware(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api/{version}")
+	api.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if got := req.Pattern; got != "/api/{version}/users/{id}" {
+				t.Fatalf("middleware req.Pattern = %q, want %q", got, "/api/{version}/users/{id}")
+			}
+			next.ServeHTTP(w, req)
+		})
+	})
+	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestRequestPatternSetForMethodNotAllowed(t *testing.T) {
 	r := New()
 	r.Get("/users/{id}", writeStatus(http.StatusNoContent))
@@ -1274,6 +1331,23 @@ func TestRequestPatternSetForMethodNotAllowed(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/users/42", nil))
+
+	assertStatus(t, rec, http.StatusMethodNotAllowed)
+}
+
+func TestRequestPatternIncludesSubRouterPatternsForMethodNotAllowed(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api/{version}")
+	api.Get("/users/{id}", writeStatus(http.StatusNoContent))
+	r.SetMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if got := req.Pattern; got != "/api/{version}/users/{id}" {
+			t.Fatalf("req.Pattern = %q, want %q", got, "/api/{version}/users/{id}")
+		}
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/users/42", nil))
 
 	assertStatus(t, rec, http.StatusMethodNotAllowed)
 }

@@ -27,14 +27,16 @@ func (r *Router) HandleErr(method, pattern string, h http.Handler) error {
 	}
 
 	compiled := compose(h, r.middleware)
+	fullPattern := joinPatterns(r.patternPrefix, pattern)
 	rt := &route{
 		handler: compiled,
-		pattern: pattern,
+		pattern: fullPattern,
 	}
 	registration := routeRegistration{
-		method:  method,
-		pattern: pattern,
-		route:   rt,
+		method:      method,
+		pattern:     pattern,
+		fullPattern: fullPattern,
+		route:       rt,
 	}
 
 	if err := r.insertMethodRoute(registration); err != nil {

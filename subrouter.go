@@ -38,11 +38,13 @@ func (r *Router) SubRouter(pattern string) *Router {
 // match.
 func (r *Router) SubRouterErr(pattern string) (*Router, error) {
 	child := newChildRouter(r)
+	pattern = cleanMountPattern(pattern)
 
 	if err := r.subMounts.TryInsert(pattern, child); err != nil {
 		return nil, err
 	}
 
+	child.router.patternPrefix = joinPatterns(r.patternPrefix, pattern)
 	r.hasSubRouters = true
 	return child.router, nil
 }
@@ -82,7 +84,7 @@ func (r *Router) MountErr(pattern string, h http.Handler) error {
 		router:  r,
 		handler: compose(mountedHandler{handler: h}, r.middleware),
 		mounted: true,
-		pattern: pattern,
+		pattern: joinPatterns(r.patternPrefix, pattern),
 	}
 	if err := r.subMounts.TryInsert(pattern, child); err != nil {
 		return err
