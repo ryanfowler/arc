@@ -172,6 +172,62 @@ func BenchmarkRouterServeHTTP(b *testing.B) {
 	}
 }
 
+func BenchmarkMountMatcherMatch(b *testing.B) {
+	benchmarks := []struct {
+		name  string
+		path  string
+		param string
+	}{
+		{
+			name:  "param_siblings_first",
+			path:  "/tenant/route0",
+			param: "tenant0",
+		},
+		{
+			name:  "param_siblings_last",
+			path:  "/tenant/route99",
+			param: "tenant99",
+		},
+		{
+			name:  "param_siblings_miss",
+			path:  "/tenant/missing",
+			param: "tenant0",
+		},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			var m mountMatcher
+			for i := 0; i < 100; i++ {
+				pattern := "/{tenant" + strconv.Itoa(i) + "}/route" + strconv.Itoa(i)
+				if err := m.TryInsert(pattern, &childRouter{}); err != nil {
+					b.Fatal(err)
+				}
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			var matched bool
+			var param string
+			for i := 0; i < b.N; i++ {
+				_, _, params, ok := m.Match(bm.path)
+				matched = ok
+				if ok {
+					param = params.Get(bm.param)
+				}
+			}
+
+			if matched {
+				benchmarkStatus = 1
+			} else {
+				benchmarkStatus = 0
+			}
+			benchmarkParam = param
+		})
+	}
+}
+
 func writeBenchmarkStatus(status int) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(status)

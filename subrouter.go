@@ -137,11 +137,13 @@ func cleanMountPattern(pattern string) string {
 }
 
 type mountNode struct {
-	child       *childRouter
-	static      []mountStaticEdge
-	staticIndex map[string]*mountNode
-	params      []mountParamEdge
-	catchAll    []mountCatchAllEdge
+	child                 *childRouter
+	static                []mountStaticEdge
+	staticIndex           map[string]*mountNode
+	params                []mountParamEdge
+	catchAll              []mountCatchAllEdge
+	maxDescendantSegments int
+	hasCatchAllDescendant bool
 }
 
 type mountStaticEdge struct {
@@ -170,6 +172,10 @@ type mountSegment struct {
 
 func (n *mountNode) insert(segments []mountSegment, router *childRouter) {
 	current := n
+	hasCatchAll := len(segments) > 0 && segments[len(segments)-1].catchAll
+	if hasCatchAll {
+		current.hasCatchAllDescendant = true
+	}
 	for i := range segments {
 		segment := segments[i]
 		if segment.catchAll {
@@ -178,6 +184,11 @@ func (n *mountNode) insert(segments []mountSegment, router *childRouter) {
 				child:   router,
 			})
 			return
+		}
+
+		remaining := len(segments) - i
+		if remaining > current.maxDescendantSegments {
+			current.maxDescendantSegments = remaining
 		}
 
 		if segment.literal {
@@ -204,6 +215,9 @@ func (n *mountNode) insert(segments []mountSegment, router *childRouter) {
 				sortMountParamEdges(current.params)
 			}
 			current = child
+		}
+		if hasCatchAll {
+			current.hasCatchAllDescendant = true
 		}
 	}
 	current.child = router
@@ -240,24 +254,36 @@ func (n *mountNode) matchPath(path string, index int, captures []match.Param) (m
 	if index >= 0 {
 		segment, next := nextMountPathSegment(path, index)
 		if child := n.staticChild(segment); child != nil {
-			if candidate, ok := child.matchPath(path, next, captures); ok {
-				best = betterMountMatch(best, candidate)
+			if child.canImproveMountMatch(path, next, best) {
+				if candidate, ok := child.matchPath(path, next, captures); ok {
+					best = betterMountMatch(best, candidate)
+				}
 			}
 		}
 
 		for i := range n.params {
-			value, ok := matchMountParam(n.params[i].pattern, segment)
+			edge := n.params[i]
+			value, ok := matchMountParam(edge.pattern, segment)
 			if !ok {
 				continue
 			}
-			nextCaptures := appendMountParam(captures, n.params[i].pattern.name, value)
-			if candidate, ok := n.params[i].child.matchPath(path, next, nextCaptures); ok {
+			if !edge.child.canImproveMountMatch(path, next, best) {
+				continue
+			}
+			if !edge.child.canStartMountMatch(path, next) {
+				continue
+			}
+			nextCaptures := appendMountParam(captures, edge.pattern.name, value)
+			if candidate, ok := edge.child.matchPath(path, next, nextCaptures); ok {
 				best = betterMountMatch(best, candidate)
 			}
 		}
 
 		for i := range n.catchAll {
 			edge := n.catchAll[i]
+			if best.child != nil && best.consumed >= len(path)+1 {
+				continue
+			}
 			if !matchMountCatchAll(edge.pattern, path[index:]) {
 				continue
 			}
@@ -273,6 +299,53 @@ func (n *mountNode) matchPath(path string, index int, captures []match.Param) (m
 	}
 
 	return best, best.child != nil
+}
+
+func (n *mountNode) canImproveMountMatch(path string, index int, best mountMatch) bool {
+	if best.child == nil {
+		return true
+	}
+	if n.hasCatchAllDescendant {
+		return best.consumed < len(path)+1
+	}
+	return maxConsumedMountPath(path, index, n.maxDescendantSegments) > best.consumed
+}
+
+func (n *mountNode) canStartMountMatch(path string, index int) bool {
+	if n.child != nil {
+		return true
+	}
+	if index < 0 {
+		return false
+	}
+
+	segment, _ := nextMountPathSegment(path, index)
+	if n.staticChild(segment) != nil {
+		return true
+	}
+	for i := range n.params {
+		if _, ok := matchMountParam(n.params[i].pattern, segment); ok {
+			return true
+		}
+	}
+	for i := range n.catchAll {
+		if matchMountCatchAll(n.catchAll[i].pattern, path[index:]) {
+			return true
+		}
+	}
+	return false
+}
+
+func maxConsumedMountPath(path string, index int, segments int) int {
+	consumed := consumedMountPath(path, index)
+	for range segments {
+		if index < 0 {
+			return consumed
+		}
+		_, index = nextMountPathSegment(path, index)
+		consumed = consumedMountPath(path, index)
+	}
+	return consumed
 }
 
 func betterMountMatch(best, candidate mountMatch) mountMatch {
