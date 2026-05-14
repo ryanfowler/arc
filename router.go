@@ -166,11 +166,11 @@ func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, pa
 
 	if methods, routeParams, ok := r.matchMethodRoute(path); ok {
 		w.Header().Set("Allow", methods.allowHeader())
-		r.methodNotAllowed.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams)))
+		r.methodNotAllowed.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams), methods.pattern))
 		return
 	}
 
-	r.notFound.ServeHTTP(w, requestForHandler(req, params))
+	r.notFound.ServeHTTP(w, requestForHandler(req, params, ""))
 }
 
 func (r *Router) serveHost(w http.ResponseWriter, req *http.Request, path string, params match.Params) bool {
@@ -217,7 +217,7 @@ func (r *Router) serveRoute(w http.ResponseWriter, req *http.Request, path strin
 		return false
 	}
 
-	route.handler.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams)))
+	route.handler.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams), route.pattern))
 	return true
 }
 
@@ -393,23 +393,37 @@ func normalizeHost(host string) string {
 	return strings.ToLower(host)
 }
 
-func requestForHandler(req *http.Request, params match.Params) *http.Request {
+func requestForHandler(req *http.Request, params match.Params, pattern string) *http.Request {
 	if params.Len() == 0 {
+		req.Pattern = pattern
 		return req
 	}
 
-	if paramsEqual(Params(req), params) {
+	paramsMatch := paramsEqual(Params(req), params)
+	pathValuesMatch := pathValuesEqual(req, params)
+	if paramsMatch && pathValuesMatch {
+		req.Pattern = pattern
 		return req
 	}
 
-	return req.WithContext(context.WithValue(req.Context(), requestParamsKey, params))
+	ctx := req.Context()
+	if !paramsMatch {
+		ctx = context.WithValue(ctx, requestParamsKey, params)
+	}
+	next := req.WithContext(ctx)
+	if !pathValuesMatch {
+		setPathValues(next, params)
+	}
+	next.Pattern = pattern
+	return next
 }
 
 func requestForRouter(req *http.Request, path string, params match.Params) *http.Request {
 	currentParams := Params(req)
 	currentPath, hasPath := dispatchPath(req)
 	paramsMatch := paramsEqual(currentParams, params)
-	if paramsMatch && hasPath && currentPath == path {
+	pathValuesMatch := pathValuesEqual(req, params)
+	if paramsMatch && pathValuesMatch && hasPath && currentPath == path {
 		return req
 	}
 
@@ -420,11 +434,15 @@ func requestForRouter(req *http.Request, path string, params match.Params) *http
 	if !hasPath || currentPath != path {
 		ctx = context.WithValue(ctx, requestDispatchKey, path)
 	}
-	if ctx == req.Context() {
+	if ctx == req.Context() && pathValuesMatch {
 		return req
 	}
 
-	return req.WithContext(ctx)
+	next := req.WithContext(ctx)
+	if !pathValuesMatch {
+		setPathValues(next, params)
+	}
+	return next
 }
 
 type requestContextKey int
@@ -478,6 +496,23 @@ func paramsEqual(a, b match.Params) bool {
 		}
 	}
 	return true
+}
+
+func pathValuesEqual(req *http.Request, params match.Params) bool {
+	for i := 0; i < params.Len(); i++ {
+		param := params.At(i)
+		if req.PathValue(param.Key) != param.Val {
+			return false
+		}
+	}
+	return true
+}
+
+func setPathValues(req *http.Request, params match.Params) {
+	for i := 0; i < params.Len(); i++ {
+		param := params.At(i)
+		req.SetPathValue(param.Key, param.Val)
+	}
 }
 
 func mergeParams(base, overlay match.Params) match.Params {

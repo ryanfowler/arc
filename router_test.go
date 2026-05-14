@@ -1073,6 +1073,93 @@ func TestParamsReturnsRequestParams(t *testing.T) {
 	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/42", nil))
 }
 
+func TestParamsSetRequestPathValues(t *testing.T) {
+	r := New()
+	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("req.PathValue(id) = %q, want %q", got, "42")
+		}
+	})
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/42", nil))
+}
+
+func TestRequestPatternSetForStaticRoute(t *testing.T) {
+	r := New()
+	r.Get("/healthz", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.Pattern; got != "/healthz" {
+			t.Fatalf("req.Pattern = %q, want %q", got, "/healthz")
+		}
+	})
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
+}
+
+func TestRequestPatternSetForParameterizedRoute(t *testing.T) {
+	r := New()
+	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.Pattern; got != "/users/{id}" {
+			t.Fatalf("req.Pattern = %q, want %q", got, "/users/{id}")
+		}
+	})
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/42", nil))
+}
+
+func TestRequestPatternVisibleToRouteMiddleware(t *testing.T) {
+	r := New()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if got := req.Pattern; got != "/users/{id}" {
+				t.Fatalf("middleware req.Pattern = %q, want %q", got, "/users/{id}")
+			}
+			next.ServeHTTP(w, req)
+		})
+	})
+	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestRequestPatternSetForMethodNotAllowed(t *testing.T) {
+	r := New()
+	r.Get("/users/{id}", writeStatus(http.StatusNoContent))
+	r.SetMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if got := req.Pattern; got != "/users/{id}" {
+			t.Fatalf("req.Pattern = %q, want %q", got, "/users/{id}")
+		}
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/users/42", nil))
+
+	assertStatus(t, rec, http.StatusMethodNotAllowed)
+}
+
+func TestRequestPatternEmptyForNotFound(t *testing.T) {
+	r := New()
+	r.Get("/users/{id}", writeStatus(http.StatusNoContent))
+	r.SetNotFound(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if got := req.Pattern; got != "" {
+			t.Fatalf("req.Pattern = %q, want empty", got)
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+	req.Pattern = "/previous"
+	r.ServeHTTP(rec, req)
+
+	assertStatus(t, rec, http.StatusNotFound)
+}
+
 func TestParamsReturnsZeroValueWhenNoParams(t *testing.T) {
 	r := New()
 	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
@@ -1085,6 +1172,47 @@ func TestParamsReturnsZeroValueWhenNoParams(t *testing.T) {
 	})
 
 	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+}
+
+func TestRequestPathValueMergePrecedence(t *testing.T) {
+	r := New()
+	host := r.Host("{id}.example.com")
+	sub := host.SubRouter("/{id}")
+	sub.Get("/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("id"); got != "route" {
+			t.Fatalf("req.PathValue(id) = %q, want %q", got, "route")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://host.example.com/sub/route", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestRequestPathValueVisibleToSubRouterMiddleware(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api/{version}")
+	api.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if got := req.PathValue("version"); got != "v1" {
+				t.Fatalf("req.PathValue(version) = %q, want %q", got, "v1")
+			}
+			next.ServeHTTP(w, req)
+		})
+	})
+	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("req.PathValue(id) = %q, want %q", got, "42")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
 }
 
 func TestParamMergePrecedence(t *testing.T) {

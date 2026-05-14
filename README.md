@@ -94,6 +94,9 @@ id, ok := params.TryGet("id")
 `match.Params`. That means methods like `Len`, `At`, `Get`, `TryGet`, `Seq`,
 `AppendTo`, and `All` are available directly.
 
+Captured parameters are also mirrored to the standard library request path
+values, so `req.PathValue("id")` works with net/http middleware that expects it.
+
 If a parameter name is captured at multiple levels, the more specific match
 wins:
 
