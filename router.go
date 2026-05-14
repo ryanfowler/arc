@@ -46,7 +46,8 @@ type Router struct {
 	notFound         http.Handler
 	methodNotAllowed http.Handler
 
-	strictSlash bool
+	strictSlash       bool
+	requestPathValues bool
 }
 
 type route struct {
@@ -127,6 +128,16 @@ func (r *Router) SetStrictSlash(strict bool) {
 	r.strictSlash = strict
 }
 
+// SetRequestPathValues configures whether captured parameters are mirrored to
+// http.Request.PathValue.
+//
+// Request path values are disabled by default. Enable this when middleware or
+// handlers need to read route parameters with req.PathValue instead of arc.Param
+// or arc.Params.
+func (r *Router) SetRequestPathValues(enabled bool) {
+	r.requestPathValues = enabled
+}
+
 func defaultMethodNotAllowed(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusMethodNotAllowed)
 }
@@ -168,11 +179,11 @@ func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, pa
 
 	if methods, routeParams, ok := r.matchMethodRoute(path); ok {
 		w.Header().Set("Allow", methods.allowHeader())
-		r.methodNotAllowed.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams), methods.pattern))
+		r.methodNotAllowed.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams), methods.pattern, r.requestPathValues))
 		return
 	}
 
-	r.notFound.ServeHTTP(w, requestForHandler(req, params, ""))
+	r.notFound.ServeHTTP(w, requestForHandler(req, params, "", r.requestPathValues))
 }
 
 func (r *Router) serveHost(w http.ResponseWriter, req *http.Request, path string, params match.Params) bool {
@@ -219,7 +230,7 @@ func (r *Router) serveRoute(w http.ResponseWriter, req *http.Request, path strin
 		return false
 	}
 
-	route.handler.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams), route.pattern))
+	route.handler.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams), route.pattern, r.requestPathValues))
 	return true
 }
 
@@ -364,6 +375,7 @@ func newChildRouter(parent *Router) *childRouter {
 	r.SetNotFound(parent.notFound)
 	r.SetMethodNotAllowed(parent.methodNotAllowed)
 	r.SetStrictSlash(parent.strictSlash)
+	r.SetRequestPathValues(parent.requestPathValues)
 	child := &childRouter{router: r}
 	if len(parent.middleware) > 0 {
 		child.handler = compose(routerHandler{router: r}, parent.middleware)
@@ -373,11 +385,11 @@ func newChildRouter(parent *Router) *childRouter {
 
 func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path string, params match.Params) {
 	if c.mounted {
-		c.handler.ServeHTTP(w, requestForMount(req, path, params, c.pattern))
+		c.handler.ServeHTTP(w, requestForMount(req, path, params, c.pattern, c.router.requestPathValues))
 		return
 	}
 	if c.handler != nil {
-		c.handler.ServeHTTP(w, requestForRouter(req, path, params))
+		c.handler.ServeHTTP(w, requestForRouter(req, path, params, c.router.requestPathValues))
 		return
 	}
 	c.router.serve(w, req, path, params)
@@ -399,14 +411,14 @@ func normalizeHost(host string) string {
 	return strings.ToLower(host)
 }
 
-func requestForHandler(req *http.Request, params match.Params, pattern string) *http.Request {
+func requestForHandler(req *http.Request, params match.Params, pattern string, requestPathValues bool) *http.Request {
 	if params.Len() == 0 {
 		req.Pattern = pattern
 		return req
 	}
 
 	paramsMatch := paramsEqual(Params(req), params)
-	pathValuesMatch := pathValuesEqual(req, params)
+	pathValuesMatch := requestPathValuesMatch(req, params, requestPathValues)
 	if paramsMatch && pathValuesMatch {
 		req.Pattern = pattern
 		return req
@@ -424,11 +436,11 @@ func requestForHandler(req *http.Request, params match.Params, pattern string) *
 	return next
 }
 
-func requestForRouter(req *http.Request, path string, params match.Params) *http.Request {
+func requestForRouter(req *http.Request, path string, params match.Params, requestPathValues bool) *http.Request {
 	currentParams := Params(req)
 	currentPath, hasPath := dispatchPath(req)
 	paramsMatch := paramsEqual(currentParams, params)
-	pathValuesMatch := pathValuesEqual(req, params)
+	pathValuesMatch := requestPathValuesMatch(req, params, requestPathValues)
 	if paramsMatch && pathValuesMatch && hasPath && currentPath == path {
 		return req
 	}
@@ -451,11 +463,11 @@ func requestForRouter(req *http.Request, path string, params match.Params) *http
 	return next
 }
 
-func requestForMount(req *http.Request, path string, params match.Params, pattern string) *http.Request {
+func requestForMount(req *http.Request, path string, params match.Params, pattern string, requestPathValues bool) *http.Request {
 	currentParams := Params(req)
 	currentPath, hasPath := dispatchPath(req)
 	paramsMatch := paramsEqual(currentParams, params)
-	pathValuesMatch := pathValuesEqual(req, params)
+	pathValuesMatch := requestPathValuesMatch(req, params, requestPathValues)
 	if paramsMatch && pathValuesMatch && hasPath && currentPath == path {
 		req.Pattern = pattern
 		return req
@@ -546,6 +558,13 @@ func paramsEqual(a, b match.Params) bool {
 		}
 	}
 	return true
+}
+
+func requestPathValuesMatch(req *http.Request, params match.Params, enabled bool) bool {
+	if !enabled {
+		return true
+	}
+	return pathValuesEqual(req, params)
 }
 
 func pathValuesEqual(req *http.Request, params match.Params) bool {

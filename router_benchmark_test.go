@@ -87,6 +87,18 @@ func BenchmarkRouterServeHTTP(b *testing.B) {
 			},
 		},
 		{
+			name: "param_request_path_values",
+			new: func() (*Router, *http.Request) {
+				r := New()
+				r.SetRequestPathValues(true)
+				r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+					benchmarkParam = req.PathValue("id")
+					w.WriteHeader(http.StatusNoContent)
+				})
+				return r, httptest.NewRequest(http.MethodGet, "/users/42", nil)
+			},
+		},
+		{
 			name: "catch_all",
 			new: func() (*Router, *http.Request) {
 				r := New()

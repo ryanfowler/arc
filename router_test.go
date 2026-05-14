@@ -915,6 +915,7 @@ func TestMountDispatchesHandlerWithRemainingPathAndParams(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusAccepted)
 	}))
+	r.SetRequestPathValues(true)
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tenants/acme/assets/css/app.css?v=1", nil))
@@ -1195,8 +1196,20 @@ func TestParamsReturnsRequestParams(t *testing.T) {
 	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/42", nil))
 }
 
-func TestParamsSetRequestPathValues(t *testing.T) {
+func TestParamsDoNotSetRequestPathValuesByDefault(t *testing.T) {
 	r := New()
+	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("id"); got != "" {
+			t.Fatalf("req.PathValue(id) = %q, want empty", got)
+		}
+	})
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/42", nil))
+}
+
+func TestParamsSetRequestPathValuesWhenEnabled(t *testing.T) {
+	r := New()
+	r.SetRequestPathValues(true)
 	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
 		if got := req.PathValue("id"); got != "42" {
 			t.Fatalf("req.PathValue(id) = %q, want %q", got, "42")
@@ -1298,6 +1311,7 @@ func TestParamsReturnsZeroValueWhenNoParams(t *testing.T) {
 
 func TestRequestPathValueMergePrecedence(t *testing.T) {
 	r := New()
+	r.SetRequestPathValues(true)
 	host := r.Host("{id}.example.com")
 	sub := host.SubRouter("/{id}")
 	sub.Get("/{id}", func(w http.ResponseWriter, req *http.Request) {
@@ -1316,6 +1330,7 @@ func TestRequestPathValueMergePrecedence(t *testing.T) {
 func TestRequestPathValueVisibleToSubRouterMiddleware(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api/{version}")
+	api.SetRequestPathValues(true)
 	api.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if got := req.PathValue("version"); got != "v1" {

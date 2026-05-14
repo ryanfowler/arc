@@ -79,6 +79,7 @@ func (r *Router) MountErr(pattern string, h http.Handler) error {
 
 	pattern = cleanMountPattern(pattern)
 	child := &childRouter{
+		router:  r,
 		handler: compose(mountedHandler{handler: h}, r.middleware),
 		mounted: true,
 		pattern: pattern,

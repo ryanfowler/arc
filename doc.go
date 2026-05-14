@@ -7,6 +7,7 @@
 //
 // Route, subrouter, and host patterns use match's route grammar: {name}
 // captures one non-empty segment and {*name} captures the non-empty remainder
-// of a path. Captured parameters are stored on the request context and mirrored
-// to http.Request.PathValue; they can be read with Params, Param, or PathValue.
+// of a path. Captured parameters are stored on the request context and can be
+// read with Params or Param. Use Router.SetRequestPathValues to also mirror
+// them to http.Request.PathValue.
 package arc

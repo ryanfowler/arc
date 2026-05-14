@@ -94,8 +94,17 @@ id, ok := params.TryGet("id")
 `match.Params`. That means methods like `Len`, `At`, `Get`, `TryGet`, `Seq`,
 `AppendTo`, and `All` are available directly.
 
-Captured parameters are also mirrored to the standard library request path
-values, so `req.PathValue("id")` works with net/http middleware that expects it.
+Captured parameters are not mirrored to the standard library request path
+values by default. Enable that compatibility path when middleware or handlers
+need `req.PathValue`:
+
+```go
+r := arc.New()
+r.SetRequestPathValues(true)
+```
+
+With request path values enabled, `req.PathValue("id")` works with net/http
+middleware that expects it.
 
 If a parameter name is captured at multiple levels, the more specific match
 wins:
@@ -163,8 +172,8 @@ r.Mount("/tenants/{tenant}/assets", http.FileServerFS(assets))
 Mounted handlers receive the remaining path after the mount point as
 `req.URL.Path`. For example, a handler mounted at `/assets` receives `/app.css`
 for a request to `/assets/app.css`, while both `/assets` and `/assets/` are
-dispatched as `/`. Mount parameters are available with `arc.Param` and
-`req.PathValue`.
+dispatched as `/`. Mount parameters are available with `arc.Param`, and with
+`req.PathValue` when request path values are enabled.
 
 ## Host Routing
 
