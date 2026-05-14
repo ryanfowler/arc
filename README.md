@@ -72,6 +72,21 @@ Exact route matches still take precedence when strict slash matching is
 disabled. If both `/users/{id}` and `/users/{id}/` are registered, a request for
 `/users/42/` uses the explicit trailing-slash route.
 
+### Path Matching Details
+
+`arc` matches against `req.URL.Path` as parsed by `net/http`. It does not match
+against `req.URL.RawPath`, `req.URL.EscapedPath()`, or `RequestURI`.
+
+This differs from `net/http.ServeMux` in two important edge cases:
+
+- Escaped slashes are already decoded in `req.URL.Path`, so `/files/a%2Fb` is
+  dispatched as `/files/a/b`. A route like `/files/{id}` does not match that
+  request, while `/files/{*path}` can capture `a/b`.
+- `arc` does not clean request paths or issue `ServeMux`-style redirects for
+  `.` segments, `..` segments, or repeated slashes. Those paths are matched as
+  they appear in `req.URL.Path`, apart from the optional single trailing slash
+  relaxation controlled by `SetStrictSlash(false)`.
+
 ## Request Parameters
 
 Use `arc.Param` for a single parameter:
@@ -192,7 +207,8 @@ tenant.Get("/", func(w http.ResponseWriter, req *http.Request) {
 ```
 
 Host matching is case-insensitive. If `Request.Host` includes a port, the port
-is ignored before matching.
+is ignored before matching. Brackets around IPv6 literals are also ignored, so
+`[::1]` and `[::1]:8080` match the host pattern `::1`.
 
 If no host pattern matches, dispatch falls through to the parent router's
 subrouters and routes.

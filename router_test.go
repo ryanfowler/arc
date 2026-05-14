@@ -54,6 +54,62 @@ func TestRouterMatchesCatchAll(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestRouterUsesURLPathForEscapedSlash(t *testing.T) {
+	t.Run("single segment route does not match", func(t *testing.T) {
+		r := New()
+		r.Get("/files/{name}", writeStatus(http.StatusAccepted))
+
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/files/a%2Fb", nil))
+
+		assertStatus(t, rec, http.StatusNotFound)
+	})
+
+	t.Run("catch all sees decoded slash", func(t *testing.T) {
+		r := New()
+		r.Get("/files/{*path}", func(w http.ResponseWriter, req *http.Request) {
+			if got := req.URL.Path; got != "/files/a/b" {
+				t.Fatalf("req.URL.Path = %q, want %q", got, "/files/a/b")
+			}
+			if got := Param(req, "path"); got != "a/b" {
+				t.Fatalf("Param(path) = %q, want %q", got, "a/b")
+			}
+			w.WriteHeader(http.StatusAccepted)
+		})
+
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/files/a%2Fb", nil))
+
+		assertStatus(t, rec, http.StatusAccepted)
+	})
+}
+
+func TestRouterDoesNotCleanRequestPath(t *testing.T) {
+	tests := []struct {
+		name  string
+		route string
+		path  string
+	}{
+		{"dot dot segment", "/admin", "/static/../admin"},
+		{"repeated slash", "/static/admin", "/static//admin"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := New()
+			r.Get(tt.route, writeStatus(http.StatusAccepted))
+
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+
+			assertStatus(t, rec, http.StatusNotFound)
+			if got := rec.Header().Get("Location"); got != "" {
+				t.Fatalf("Location = %q, want empty", got)
+			}
+		})
+	}
+}
+
 func TestRouterStrictSlashDefaultRejectsTrailingSlash(t *testing.T) {
 	r := New()
 	r.Get("/users/{id}", writeStatus(http.StatusNoContent))
@@ -1133,6 +1189,19 @@ func TestHostRouterNormalizesIPv6HostWithPort(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "http://[::1]/", nil)
 	req.Host = "[::1]:8080"
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestHostRouterNormalizesBracketedIPv6HostWithoutPort(t *testing.T) {
+	r := New()
+	local := r.Host("::1")
+	local.Get("/", writeStatus(http.StatusAccepted))
+
+	req := httptest.NewRequest(http.MethodGet, "http://[::1]/", nil)
+	req.Host = "[::1]"
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 

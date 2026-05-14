@@ -4,7 +4,8 @@ package arc
 //
 // Host patterns use the github.com/ryanfowler/match grammar, for example
 // "api.example.com" or "{tenant}.example.com". Request hosts are matched
-// case-insensitively, and a port in Request.Host is ignored.
+// case-insensitively, a port in Request.Host is ignored, and brackets around
+// IPv6 literals are ignored.
 //
 // Parameters captured by the host pattern are available to handlers registered
 // on the returned router. If no host pattern matches, dispatch falls through to

@@ -162,6 +162,10 @@ func (r *Router) Use(mw ...Middleware) {
 // ServeHTTP dispatches req to the best matching host router, subrouter, or
 // route.
 //
+// Route and subrouter matching uses req.URL.Path as parsed by net/http. Arc
+// does not match on req.URL.RawPath or req.URL.EscapedPath, and it does not
+// perform net/http.ServeMux path cleaning redirects.
+//
 // ServeHTTP satisfies http.Handler. It should usually be called by net/http
 // rather than directly.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -426,6 +430,9 @@ func normalizeHost(host string) string {
 
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
+	}
+	if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' && strings.IndexByte(host, ':') != -1 {
+		host = host[1 : len(host)-1]
 	}
 	return strings.ToLower(host)
 }

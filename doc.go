@@ -10,4 +10,8 @@
 // of a path. Captured parameters are stored on the request context and can be
 // read with Params or Param. Use Router.SetRequestPathValues to also mirror
 // them to http.Request.PathValue.
+//
+// Arc matches paths using req.URL.Path as parsed by net/http. It does not use
+// URL.RawPath or URL.EscapedPath, and it does not perform net/http.ServeMux
+// path cleaning redirects for dot segments or repeated slashes.
 package arc
