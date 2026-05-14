@@ -19,15 +19,31 @@ import (
 //
 // Middleware already registered on the parent wraps the child router.
 // Middleware added to the child applies only inside the child router.
+//
+// Invalid, duplicate, or ambiguous mount patterns panic with the error returned
+// by match. Use SubRouterErr to receive the registration error instead.
 func (r *Router) SubRouter(pattern string) *Router {
+	child, err := r.SubRouterErr(pattern)
+	if err != nil {
+		panic(err)
+	}
+	return child
+}
+
+// SubRouterErr registers and returns a child router mounted at pattern.
+//
+// The pattern uses the github.com/ryanfowler/match route grammar. Registration
+// errors include invalid parameter syntax and mount conflicts reported by
+// match.
+func (r *Router) SubRouterErr(pattern string) (*Router, error) {
 	child := newChildRouter(r)
 
 	if err := r.subMounts.TryInsert(pattern, child); err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	r.hasSubRouters = true
-	return child.router
+	return child.router, nil
 }
 
 type mountMatcher struct {

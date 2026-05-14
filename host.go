@@ -12,11 +12,27 @@ package arc
 //
 // Middleware already registered on the parent wraps the host router.
 // Middleware added to the returned router applies only inside that host router.
+//
+// Invalid, duplicate, or ambiguous host patterns panic with the error returned
+// by match. Use HostErr to receive the registration error instead.
 func (r *Router) Host(pattern string) *Router {
-	child := newChildRouter(r)
-	if err := r.hostRoutes.TryInsert(normalizeHost(pattern), child); err != nil {
+	child, err := r.HostErr(pattern)
+	if err != nil {
 		panic(err)
 	}
+	return child
+}
+
+// HostErr registers and returns a child router that matches requests for
+// pattern.
+//
+// Host patterns use the github.com/ryanfowler/match grammar. Registration
+// errors include invalid parameter syntax and host conflicts reported by match.
+func (r *Router) HostErr(pattern string) (*Router, error) {
+	child := newChildRouter(r)
+	if err := r.hostRoutes.TryInsert(normalizeHost(pattern), child); err != nil {
+		return nil, err
+	}
 	r.hasHosts = true
-	return child.router
+	return child.router, nil
 }

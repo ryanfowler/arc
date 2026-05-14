@@ -188,16 +188,28 @@ and can also configure their own handlers.
 
 ## Registration Errors
 
-The route helpers panic if a pattern is invalid, duplicated, or ambiguous:
+Route, subrouter, and host registration helpers panic if a pattern is invalid,
+duplicated, or ambiguous:
 
 ```go
 r.Get("/users/{id}", getUser)
 ```
 
-Use `HandleErr` when you want to handle registration errors explicitly:
+Use `HandleErr`, `SubRouterErr`, or `HostErr` when you want to handle
+registration errors explicitly:
 
 ```go
 if err := r.HandleErr(http.MethodGet, "/users/{id}", http.HandlerFunc(getUser)); err != nil {
+	return err
+}
+
+api, err := r.SubRouterErr("/api/{version}")
+if err != nil {
+	return err
+}
+
+tenant, err := r.HostErr("{tenant}.example.com")
+if err != nil {
 	return err
 }
 ```

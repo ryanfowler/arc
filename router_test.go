@@ -829,6 +829,31 @@ func TestSubRouterRejectsAmbiguousMounts(t *testing.T) {
 	r.SubRouter("/api/v{version}.json")
 }
 
+func TestSubRouterErrReturnsMatchErrors(t *testing.T) {
+	r := New()
+	if child, err := r.SubRouterErr("/users/{}"); !errors.Is(err, match.ErrInvalidParam) {
+		t.Fatalf("SubRouterErr invalid param child, error = %v, %v; want ErrInvalidParam", child, err)
+	}
+	if r.hasSubRouters {
+		t.Fatal("router hasSubRouters = true after failed first SubRouterErr, want false")
+	}
+
+	api, err := r.SubRouterErr("/api/{name}.json")
+	if err != nil {
+		t.Fatalf("SubRouterErr valid mount error = %v", err)
+	}
+	api.Get("/", writeStatus(http.StatusAccepted))
+
+	var conflict *match.ConflictError
+	if child, err := r.SubRouterErr("/api/v{version}.json"); !errors.As(err, &conflict) {
+		t.Fatalf("SubRouterErr conflict child, error = %v, %v; want *match.ConflictError", child, err)
+	}
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/foo.json", nil))
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestSubRouterBacktracksAcrossParamMounts(t *testing.T) {
 	r := New()
 	foo := r.SubRouter("/{section}/foo")
@@ -904,6 +929,31 @@ func TestHostRouterPrefersStaticHost(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil))
 
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestHostErrReturnsMatchErrors(t *testing.T) {
+	r := New()
+	if child, err := r.HostErr("{}.example.com"); !errors.Is(err, match.ErrInvalidParam) {
+		t.Fatalf("HostErr invalid param child, error = %v, %v; want ErrInvalidParam", child, err)
+	}
+	if r.hasHosts {
+		t.Fatal("router hasHosts = true after failed first HostErr, want false")
+	}
+
+	api, err := r.HostErr("api.example.com")
+	if err != nil {
+		t.Fatalf("HostErr valid host error = %v", err)
+	}
+	api.Get("/", writeStatus(http.StatusAccepted))
+
+	var conflict *match.ConflictError
+	if child, err := r.HostErr("api.example.com"); !errors.As(err, &conflict) {
+		t.Fatalf("HostErr duplicate child, error = %v, %v; want *match.ConflictError", child, err)
+	}
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil))
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
