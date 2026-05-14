@@ -436,67 +436,31 @@ func requestForHandler(req *http.Request, params match.Params, pattern string, r
 		return req
 	}
 
-	paramsMatch := paramsEqual(Params(req), params)
-	pathValuesMatch := requestPathValuesMatch(req, params, requestPathValues)
-	if paramsMatch && pathValuesMatch {
-		req.Pattern = pattern
-		return req
-	}
-
-	withParams := !paramsMatch
-	next := requestWithState(req, params, withParams, "", false, !pathValuesMatch)
-	if !pathValuesMatch {
-		setPathValues(next, params)
-	}
-	next.Pattern = pattern
-	return next
+	return requestWithMatchState(req, requestMatchState{
+		params:            params,
+		pattern:           pattern,
+		flags:             requestMatchPattern,
+		requestPathValues: requestPathValues,
+	})
 }
 
 func requestForRouter(req *http.Request, path string, params match.Params, requestPathValues bool) *http.Request {
-	currentParams := Params(req)
-	currentPath, hasPath := dispatchPath(req)
-	paramsMatch := paramsEqual(currentParams, params)
-	pathValuesMatch := requestPathValuesMatch(req, params, requestPathValues)
-	if paramsMatch && pathValuesMatch && hasPath && currentPath == path {
-		return req
-	}
-
-	withParams := !paramsMatch
-	withPath := !hasPath || currentPath != path
-	if !withParams && !withPath && pathValuesMatch {
-		return req
-	}
-
-	next := requestWithState(req, params, withParams, path, withPath, !pathValuesMatch)
-	if !pathValuesMatch {
-		setPathValues(next, params)
-	}
-	return next
+	return requestWithMatchState(req, requestMatchState{
+		params:            params,
+		dispatchPath:      path,
+		flags:             requestMatchDispatchPath,
+		requestPathValues: requestPathValues,
+	})
 }
 
 func requestForMount(req *http.Request, path string, params match.Params, pattern string, requestPathValues bool) *http.Request {
-	currentParams := Params(req)
-	currentPath, hasPath := dispatchPath(req)
-	paramsMatch := paramsEqual(currentParams, params)
-	pathValuesMatch := requestPathValuesMatch(req, params, requestPathValues)
-	if paramsMatch && pathValuesMatch && hasPath && currentPath == path {
-		req.Pattern = pattern
-		return req
-	}
-
-	withParams := !paramsMatch
-	withPath := !hasPath || currentPath != path
-	if !withParams && !withPath && pathValuesMatch {
-		req.Pattern = pattern
-		return req
-	}
-
-	next := requestWithState(req, params, withParams, path, withPath, !pathValuesMatch)
-	if !pathValuesMatch {
-		setPathValues(next, params)
-	}
-	next.Pattern = pattern
-	return next
+	return requestWithMatchState(req, requestMatchState{
+		params:            params,
+		dispatchPath:      path,
+		pattern:           pattern,
+		flags:             requestMatchDispatchPath | requestMatchPattern,
+		requestPathValues: requestPathValues,
+	})
 }
 
 func requestWithURLPath(req *http.Request, path string) *http.Request {
@@ -520,73 +484,123 @@ const (
 	requestDispatchKey
 )
 
-// Specialized contexts avoid context.WithValue's extra allocation while keeping
-// request params available through the standard Context.Value path.
-type requestParamsContext struct {
-	context.Context
-	params match.Params
+type requestMatchFlag uint8
+
+const (
+	requestMatchPattern requestMatchFlag = 1 << iota
+	requestMatchDispatchPath
+)
+
+type requestMatchState struct {
+	params            match.Params
+	dispatchPath      string
+	pattern           string
+	flags             requestMatchFlag
+	requestPathValues bool
 }
 
-func (ctx *requestParamsContext) Value(key any) any {
-	if key == requestParamsKey {
-		return ctx.params
+// requestWithMatchState is the only place that decides whether a matched
+// request needs arc state, a shallow request copy for PathValue updates, or no
+// clone at all.
+func requestWithMatchState(req *http.Request, state requestMatchState) *http.Request {
+	if state.flags&requestMatchDispatchPath == 0 && state.params.Len() == 0 {
+		if state.flags&requestMatchPattern != 0 {
+			req.Pattern = state.pattern
+		}
+		return req
 	}
-	return ctx.Context.Value(key)
-}
 
-type requestDispatchContext struct {
-	context.Context
-	path string
-}
-
-func (ctx *requestDispatchContext) Value(key any) any {
-	if key == requestDispatchKey {
-		return ctx.path
+	paramsMatch := paramsEqual(Params(req), state.params)
+	pathValuesMatch := requestPathValuesMatch(req, state.params, state.requestPathValues)
+	dispatchPathMatch := true
+	if state.flags&requestMatchDispatchPath != 0 {
+		currentPath, ok := dispatchPath(req)
+		dispatchPathMatch = ok && currentPath == state.dispatchPath
 	}
-	return ctx.Context.Value(key)
+
+	if paramsMatch && pathValuesMatch && dispatchPathMatch {
+		if state.flags&requestMatchPattern != 0 {
+			req.Pattern = state.pattern
+		}
+		return req
+	}
+
+	next := requestWithState(req, requestState{
+		params:      state.params,
+		path:        state.dispatchPath,
+		flags:       requestStateFlags(!paramsMatch, !dispatchPathMatch),
+		copyRequest: !pathValuesMatch,
+	})
+	if !pathValuesMatch {
+		setPathValues(next, state.params)
+	}
+	if state.flags&requestMatchPattern != 0 {
+		next.Pattern = state.pattern
+	}
+	return next
 }
 
+type requestStateFlag uint8
+
+const (
+	requestStateParams requestStateFlag = 1 << iota
+	requestStateDispatchPath
+)
+
+type requestState struct {
+	params      match.Params
+	path        string
+	flags       requestStateFlag
+	copyRequest bool
+}
+
+// requestStateContext keeps all arc request state in one wrapper. Flags mark
+// which fields override any older arc state below it in the context chain.
 type requestStateContext struct {
 	context.Context
 	params match.Params
 	path   string
+	flags  requestStateFlag
 }
 
 func (ctx *requestStateContext) Value(key any) any {
 	switch key {
 	case requestParamsKey:
-		return ctx.params
+		if ctx.flags&requestStateParams != 0 {
+			return ctx.params
+		}
 	case requestDispatchKey:
-		return ctx.path
-	default:
-		return ctx.Context.Value(key)
+		if ctx.flags&requestStateDispatchPath != 0 {
+			return ctx.path
+		}
 	}
+	return ctx.Context.Value(key)
 }
 
-func requestWithState(req *http.Request, params match.Params, withParams bool, path string, withPath bool, copyRequest bool) *http.Request {
-	if withParams && withPath {
-		return req.WithContext(&requestStateContext{
-			Context: req.Context(),
-			params:  params,
-			path:    path,
-		})
-	}
+func requestStateFlags(withParams, withPath bool) requestStateFlag {
+	var flags requestStateFlag
 	if withParams {
-		return req.WithContext(&requestParamsContext{
-			Context: req.Context(),
-			params:  params,
-		})
+		flags |= requestStateParams
 	}
 	if withPath {
-		return req.WithContext(&requestDispatchContext{
-			Context: req.Context(),
-			path:    path,
-		})
+		flags |= requestStateDispatchPath
 	}
-	if copyRequest {
-		return req.WithContext(req.Context())
+	return flags
+}
+
+func requestWithState(req *http.Request, state requestState) *http.Request {
+	if state.flags == 0 {
+		if state.copyRequest {
+			return req.WithContext(req.Context())
+		}
+		return req
 	}
-	return req
+	return req.WithContext(&requestStateContext{
+		Context: req.Context(),
+		params:  state.params,
+		path:    state.path,
+		flags:   state.flags,
+	})
 }
 
 func dispatchState(req *http.Request) (string, match.Params) {
@@ -615,11 +629,10 @@ func Params(req *http.Request) RequestParams {
 func paramsFromContext(ctx context.Context) (match.Params, bool) {
 	for {
 		switch current := ctx.(type) {
-		case *requestParamsContext:
-			return current.params, true
 		case *requestStateContext:
-			return current.params, true
-		case *requestDispatchContext:
+			if current.flags&requestStateParams != 0 {
+				return current.params, true
+			}
 			ctx = current.Context
 			continue
 		default:
@@ -632,11 +645,10 @@ func paramsFromContext(ctx context.Context) (match.Params, bool) {
 func dispatchPathFromContext(ctx context.Context) (string, bool) {
 	for {
 		switch current := ctx.(type) {
-		case *requestDispatchContext:
-			return current.path, true
 		case *requestStateContext:
-			return current.path, true
-		case *requestParamsContext:
+			if current.flags&requestStateDispatchPath != 0 {
+				return current.path, true
+			}
 			ctx = current.Context
 			continue
 		default:
