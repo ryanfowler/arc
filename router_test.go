@@ -53,6 +53,89 @@ func TestRouterMatchesCatchAll(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestRouterStrictSlashDefaultRejectsTrailingSlash(t *testing.T) {
+	r := New()
+	r.Get("/users/{id}", writeStatus(http.StatusNoContent))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/users/42/", nil))
+
+	assertStatus(t, rec, http.StatusNotFound)
+}
+
+func TestRouterRelaxedSlashMatchesTrailingSlash(t *testing.T) {
+	r := New()
+	r.SetStrictSlash(false)
+	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "id"); got != "42" {
+			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		}
+		if got := req.URL.Path; got != "/users/42/" {
+			t.Fatalf("URL.Path = %q, want %q", got, "/users/42/")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/users/42/", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestRouterRelaxedSlashPreservesExactTrailingSlashRoute(t *testing.T) {
+	r := New()
+	r.SetStrictSlash(false)
+	r.Get("/resource", writeStatus(http.StatusAccepted))
+	r.Get("/resource/", writeStatus(http.StatusCreated))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/resource/", nil))
+
+	assertStatus(t, rec, http.StatusCreated)
+}
+
+func TestRouterRelaxedSlashDoesNotAddSecondTrailingSlash(t *testing.T) {
+	r := New()
+	r.SetStrictSlash(false)
+	r.Get("/resource/", writeStatus(http.StatusCreated))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/resource//", nil))
+
+	assertStatus(t, rec, http.StatusNotFound)
+}
+
+func TestRouterRelaxedSlashDoesNotMatchDoubleSlashToRoot(t *testing.T) {
+	r := New()
+	r.SetStrictSlash(false)
+	r.Get("/", writeStatus(http.StatusCreated))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "//", nil))
+
+	assertStatus(t, rec, http.StatusNotFound)
+}
+
+func TestRouterRelaxedSlashReturnsMethodNotAllowed(t *testing.T) {
+	r := New()
+	r.SetStrictSlash(false)
+	r.SetMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "id"); got != "42" {
+			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		}
+		w.WriteHeader(http.StatusConflict)
+	}))
+	r.Get("/users/{id}", writeStatus(http.StatusNoContent))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/users/42/", nil))
+
+	assertStatus(t, rec, http.StatusConflict)
+	if got := rec.Header().Get("Allow"); got != http.MethodGet {
+		t.Fatalf("Allow = %q, want %q", got, http.MethodGet)
+	}
+}
+
 func TestRouterReturnsNotFound(t *testing.T) {
 	r := New()
 	r.Get("/known", writeStatus(http.StatusNoContent))
@@ -420,6 +503,23 @@ func TestSubRouterRootPaths(t *testing.T) {
 			assertStatus(t, rec, http.StatusCreated)
 		})
 	}
+}
+
+func TestSubRouterInheritsStrictSlashSetting(t *testing.T) {
+	r := New()
+	r.SetStrictSlash(false)
+	api := r.SubRouter("/api")
+	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "id"); got != "42" {
+			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/users/42/", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
 }
 
 func TestSubRouterPreservesQuery(t *testing.T) {
@@ -842,6 +942,23 @@ func TestHostRouterNormalizesIPv6HostWithPort(t *testing.T) {
 	req.Host = "[::1]:8080"
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestHostRouterInheritsStrictSlashSetting(t *testing.T) {
+	r := New()
+	r.SetStrictSlash(false)
+	api := r.Host("api.example.com")
+	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "id"); got != "42" {
+			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://api.example.com/users/42/", nil))
 
 	assertStatus(t, rec, http.StatusAccepted)
 }

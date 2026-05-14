@@ -27,7 +27,10 @@ func (r *Router) HandleErr(method, pattern string, h http.Handler) error {
 	}
 
 	compiled := compose(h, r.middleware)
-	rt := &route{handler: compiled}
+	rt := &route{
+		handler: compiled,
+		pattern: pattern,
+	}
 	registration := routeRegistration{
 		method:  method,
 		pattern: pattern,

@@ -45,10 +45,13 @@ type Router struct {
 
 	notFound         http.Handler
 	methodNotAllowed http.Handler
+
+	strictSlash bool
 }
 
 type route struct {
 	handler http.Handler
+	pattern string
 }
 
 type routeRegistration struct {
@@ -60,6 +63,7 @@ type routeRegistration struct {
 type routeMethods struct {
 	methods []string
 	allow   string
+	pattern string
 }
 
 type childRouter struct {
@@ -86,6 +90,7 @@ func New() *Router {
 		routeMethods:     make(map[string]*routeMethods),
 		notFound:         http.NotFoundHandler(),
 		methodNotAllowed: http.HandlerFunc(defaultMethodNotAllowed),
+		strictSlash:      true,
 	}
 }
 
@@ -108,6 +113,16 @@ func (r *Router) SetMethodNotAllowed(h http.Handler) {
 	if h != nil {
 		r.methodNotAllowed = h
 	}
+}
+
+// SetStrictSlash configures whether route matching treats a trailing slash as
+// significant.
+//
+// Strict slash matching is enabled by default. When disabled, a request path
+// ending in "/" may match a route registered without that final slash. Exact
+// route matches still take precedence.
+func (r *Router) SetStrictSlash(strict bool) {
+	r.strictSlash = strict
 }
 
 func defaultMethodNotAllowed(w http.ResponseWriter, _ *http.Request) {
@@ -149,7 +164,7 @@ func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, pa
 		return
 	}
 
-	if methods, routeParams, ok := r.methodRoutes.Match(path); ok {
+	if methods, routeParams, ok := r.matchMethodRoute(path); ok {
 		w.Header().Set("Allow", methods.allowHeader())
 		r.methodNotAllowed.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams)))
 		return
@@ -197,13 +212,54 @@ func (r *Router) serveRoute(w http.ResponseWriter, req *http.Request, path strin
 		return false
 	}
 
-	route, routeParams, ok := routes.Match(path)
+	route, routeParams, ok := r.matchRoute(routes, path)
 	if !ok {
 		return false
 	}
 
 	route.handler.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams)))
 	return true
+}
+
+func (r *Router) matchRoute(routes *match.Router[*route], path string) (*route, match.Params, bool) {
+	route, params, ok := routes.Match(path)
+	if ok {
+		return route, params, true
+	}
+	if path, ok = r.relaxedSlashPath(path); !ok {
+		return nil, match.Params{}, false
+	}
+	route, params, ok = routes.Match(path)
+	if !ok || routePatternEndsInSlash(route.pattern) {
+		return nil, match.Params{}, false
+	}
+	return route, params, true
+}
+
+func (r *Router) matchMethodRoute(path string) (*routeMethods, match.Params, bool) {
+	methods, params, ok := r.methodRoutes.Match(path)
+	if ok {
+		return methods, params, true
+	}
+	if path, ok = r.relaxedSlashPath(path); !ok {
+		return nil, match.Params{}, false
+	}
+	methods, params, ok = r.methodRoutes.Match(path)
+	if !ok || routePatternEndsInSlash(methods.pattern) {
+		return nil, match.Params{}, false
+	}
+	return methods, params, true
+}
+
+func (r *Router) relaxedSlashPath(path string) (string, bool) {
+	if r.strictSlash || len(path) <= 1 || path[len(path)-1] != '/' {
+		return "", false
+	}
+	return path[:len(path)-1], true
+}
+
+func routePatternEndsInSlash(pattern string) bool {
+	return len(pattern) > 0 && pattern[len(pattern)-1] == '/'
 }
 
 func (r *Router) insertMethodRoute(reg routeRegistration) error {
@@ -247,7 +303,7 @@ func buildRouteTables(registrations []routeRegistration) (map[string]*match.Rout
 
 		methods := methodsByPattern[reg.pattern]
 		if methods == nil {
-			methods = &routeMethods{}
+			methods = &routeMethods{pattern: reg.pattern}
 			if err := methodRoutes.TryInsert(reg.pattern, methods); err != nil {
 				return nil, match.Router[*routeMethods]{}, nil, err
 			}
@@ -266,7 +322,7 @@ func (r *Router) addRouteMethod(pattern, method string) (*routeMethods, error) {
 		return methods, nil
 	}
 
-	methods = &routeMethods{}
+	methods = &routeMethods{pattern: pattern}
 	if err := r.methodRoutes.TryInsert(pattern, methods); err != nil {
 		return nil, err
 	}
@@ -305,6 +361,7 @@ func newChildRouter(parent *Router) *childRouter {
 	r := New()
 	r.SetNotFound(parent.notFound)
 	r.SetMethodNotAllowed(parent.methodNotAllowed)
+	r.SetStrictSlash(parent.strictSlash)
 	child := &childRouter{router: r}
 	if len(parent.middleware) > 0 {
 		child.handler = compose(routerHandler{router: r}, parent.middleware)

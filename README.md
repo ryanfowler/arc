@@ -58,6 +58,20 @@ r.Get("/users/{id}", getUser)
 r.Get("/assets/{*path}", serveAsset)
 ```
 
+Route matching is strict about trailing slashes by default, so `/users/42/`
+does not match `/users/{id}`. Disable strict slash matching when you want a
+single trailing slash to be accepted by routes registered without one:
+
+```go
+r := arc.New()
+r.SetStrictSlash(false)
+r.Get("/users/{id}", getUser) // matches /users/42 and /users/42/
+```
+
+Exact route matches still take precedence when strict slash matching is
+disabled. If both `/users/{id}` and `/users/{id}/` are registered, a request for
+`/users/42/` uses the explicit trailing-slash route.
+
 ## Request Parameters
 
 Use `arc.Param` for a single parameter:
