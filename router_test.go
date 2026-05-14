@@ -117,7 +117,8 @@ func TestRouterMethodNotAllowedAllowHeaderIncludesRegisteredMethods(t *testing.T
 }
 
 func TestRouterMethodNotAllowedAllowHeaderWithCustomHandler(t *testing.T) {
-	r := New(WithMethodNotAllowed(http.HandlerFunc(writeStatus(http.StatusConflict))))
+	r := New()
+	r.SetMethodNotAllowed(http.HandlerFunc(writeStatus(http.StatusConflict)))
 	r.Get("/known", writeStatus(http.StatusNoContent))
 	r.Patch("/known", writeStatus(http.StatusAccepted))
 
@@ -131,12 +132,13 @@ func TestRouterMethodNotAllowedAllowHeaderWithCustomHandler(t *testing.T) {
 }
 
 func TestRouterMethodNotAllowedPassesRouteParams(t *testing.T) {
-	r := New(WithMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	r := New()
+	r.SetMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if got := Param(req, "id"); got != "42" {
 			t.Fatalf("Param(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusConflict)
-	})))
+	}))
 	r.Get("/users/{id}", writeStatus(http.StatusNoContent))
 
 	rec := httptest.NewRecorder()
@@ -186,11 +188,10 @@ func TestMethodHelpers(t *testing.T) {
 	}
 }
 
-func TestOptionsConfigureFallbackHandlers(t *testing.T) {
-	r := New(
-		WithNotFound(http.HandlerFunc(writeStatus(http.StatusTeapot))),
-		WithMethodNotAllowed(http.HandlerFunc(writeStatus(http.StatusConflict))),
-	)
+func TestRouterSetFallbackHandlers(t *testing.T) {
+	r := New()
+	r.SetNotFound(http.HandlerFunc(writeStatus(http.StatusTeapot)))
+	r.SetMethodNotAllowed(http.HandlerFunc(writeStatus(http.StatusConflict)))
 	r.Get("/known", writeStatus(http.StatusNoContent))
 
 	notFound := httptest.NewRecorder()
@@ -202,8 +203,10 @@ func TestOptionsConfigureFallbackHandlers(t *testing.T) {
 	assertStatus(t, methodNotAllowed, http.StatusConflict)
 }
 
-func TestOptionsIgnoreNilFallbackHandlers(t *testing.T) {
-	r := New(WithNotFound(nil), WithMethodNotAllowed(nil))
+func TestRouterSetFallbackHandlersIgnoreNil(t *testing.T) {
+	r := New()
+	r.SetNotFound(nil)
+	r.SetMethodNotAllowed(nil)
 	r.Get("/known", writeStatus(http.StatusNoContent))
 
 	notFound := httptest.NewRecorder()
@@ -447,10 +450,9 @@ func TestSubRouterMountSkipsOnlyMountSeparator(t *testing.T) {
 }
 
 func TestSubRouterReturnsChildNotFoundAndMethodNotAllowed(t *testing.T) {
-	r := New(
-		WithNotFound(http.HandlerFunc(writeStatus(http.StatusTeapot))),
-		WithMethodNotAllowed(http.HandlerFunc(writeStatus(http.StatusConflict))),
-	)
+	r := New()
+	r.SetNotFound(http.HandlerFunc(writeStatus(http.StatusTeapot)))
+	r.SetMethodNotAllowed(http.HandlerFunc(writeStatus(http.StatusConflict)))
 	api := r.SubRouter("/api")
 	api.Get("/known", writeStatus(http.StatusNoContent))
 
@@ -463,24 +465,39 @@ func TestSubRouterReturnsChildNotFoundAndMethodNotAllowed(t *testing.T) {
 	assertStatus(t, methodNotAllowed, http.StatusConflict)
 }
 
+func TestSubRouterCanConfigureFallbackHandlers(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api")
+	api.SetNotFound(http.HandlerFunc(writeStatus(http.StatusTeapot)))
+	api.SetMethodNotAllowed(http.HandlerFunc(writeStatus(http.StatusConflict)))
+	api.Get("/known", writeStatus(http.StatusNoContent))
+
+	notFound := httptest.NewRecorder()
+	r.ServeHTTP(notFound, httptest.NewRequest(http.MethodGet, "/api/missing", nil))
+	assertStatus(t, notFound, http.StatusTeapot)
+
+	methodNotAllowed := httptest.NewRecorder()
+	r.ServeHTTP(methodNotAllowed, httptest.NewRequest(http.MethodPost, "/api/known", nil))
+	assertStatus(t, methodNotAllowed, http.StatusConflict)
+}
+
 func TestSubRouterFallbacksReceiveMergedParams(t *testing.T) {
-	r := New(
-		WithNotFound(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if got := Param(req, "version"); got != "v1" {
-				t.Fatalf("not found Param(version) = %q, want %q", got, "v1")
-			}
-			w.WriteHeader(http.StatusTeapot)
-		})),
-		WithMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if got := Param(req, "version"); got != "v1" {
-				t.Fatalf("method not allowed Param(version) = %q, want %q", got, "v1")
-			}
-			if got := Param(req, "id"); got != "42" {
-				t.Fatalf("method not allowed Param(id) = %q, want %q", got, "42")
-			}
-			w.WriteHeader(http.StatusConflict)
-		})),
-	)
+	r := New()
+	r.SetNotFound(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "version"); got != "v1" {
+			t.Fatalf("not found Param(version) = %q, want %q", got, "v1")
+		}
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	r.SetMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "version"); got != "v1" {
+			t.Fatalf("method not allowed Param(version) = %q, want %q", got, "v1")
+		}
+		if got := Param(req, "id"); got != "42" {
+			t.Fatalf("method not allowed Param(id) = %q, want %q", got, "42")
+		}
+		w.WriteHeader(http.StatusConflict)
+	}))
 	api := r.SubRouter("/api/{version}")
 	api.Get("/users/{id}", writeStatus(http.StatusNoContent))
 

@@ -164,11 +164,13 @@ header listing the registered methods.
 You can customize both:
 
 ```go
-r := arc.New(
-	arc.WithNotFound(http.HandlerFunc(notFound)),
-	arc.WithMethodNotAllowed(http.HandlerFunc(methodNotAllowed)),
-)
+r := arc.New()
+r.SetNotFound(http.HandlerFunc(notFound))
+r.SetMethodNotAllowed(http.HandlerFunc(methodNotAllowed))
 ```
+
+Subrouters inherit the parent router's fallback handlers when they are created,
+and can also configure their own handlers.
 
 ## Registration Errors
 
@@ -194,5 +196,5 @@ syntax and `*match.ConflictError`.
 Build the router before serving requests.
 
 A router is safe for concurrent serving after registration is complete.
-Registration methods are not safe to call concurrently with `ServeHTTP` or with
-other registration methods.
+Registration and configuration methods are not safe to call concurrently with
+`ServeHTTP` or with other registration and configuration methods.

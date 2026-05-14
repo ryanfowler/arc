@@ -24,13 +24,13 @@ type RequestParams = match.Params
 
 // Router routes HTTP requests by host, path, and method.
 //
-// Router implements http.Handler. Build a router by registering middleware,
-// host routers, subrouters, and routes, then pass it to http.Server or
-// http.ListenAndServe.
+// Router implements http.Handler. Build a router by configuring fallback
+// handlers and registering middleware, host routers, subrouters, and routes,
+// then pass it to http.Server or http.ListenAndServe.
 //
 // A Router is safe for concurrent serving after registration is complete. The
-// registration methods are not safe to call concurrently with ServeHTTP or with
-// other registration methods.
+// registration and configuration methods are not safe to call concurrently with
+// ServeHTTP or with other registration and configuration methods.
 type Router struct {
 	routeRegistrations []routeRegistration
 	routes             map[string]*match.Router[*route]
@@ -76,48 +76,37 @@ func (h routerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	h.router.serve(w, req, path, params)
 }
 
-// Option configures a Router when it is created with New.
-type Option func(*Router)
-
 // New returns an initialized Router.
 //
 // By default, unmatched requests use http.NotFoundHandler and requests whose
 // path matches a route registered for a different method receive status 405.
-func New(opts ...Option) *Router {
-	r := &Router{
+func New() *Router {
+	return &Router{
 		routes:           make(map[string]*match.Router[*route]),
 		routeMethods:     make(map[string]*routeMethods),
 		notFound:         http.NotFoundHandler(),
 		methodNotAllowed: http.HandlerFunc(defaultMethodNotAllowed),
 	}
-	for _, opt := range opts {
-		opt(r)
-	}
-	return r
 }
 
-// WithNotFound configures the handler used when no host, subrouter, or route
+// SetNotFound configures the handler used when no host, subrouter, or route
 // matches a request.
 //
 // Passing nil leaves the router's existing not-found handler unchanged.
-func WithNotFound(h http.Handler) Option {
-	return func(r *Router) {
-		if h != nil {
-			r.notFound = h
-		}
+func (r *Router) SetNotFound(h http.Handler) {
+	if h != nil {
+		r.notFound = h
 	}
 }
 
-// WithMethodNotAllowed configures the handler used when a request path matches
-// a route pattern, but the request method was not registered for that pattern.
+// SetMethodNotAllowed configures the handler used when a request path matches a
+// route pattern, but the request method was not registered for that pattern.
 //
 // Passing nil leaves the router's existing method-not-allowed handler
 // unchanged.
-func WithMethodNotAllowed(h http.Handler) Option {
-	return func(r *Router) {
-		if h != nil {
-			r.methodNotAllowed = h
-		}
+func (r *Router) SetMethodNotAllowed(h http.Handler) {
+	if h != nil {
+		r.methodNotAllowed = h
 	}
 }
 
@@ -313,10 +302,9 @@ func compose(h http.Handler, middleware []Middleware) http.Handler {
 }
 
 func newChildRouter(parent *Router) *childRouter {
-	r := New(
-		WithNotFound(parent.notFound),
-		WithMethodNotAllowed(parent.methodNotAllowed),
-	)
+	r := New()
+	r.SetNotFound(parent.notFound)
+	r.SetMethodNotAllowed(parent.methodNotAllowed)
 	child := &childRouter{router: r}
 	if len(parent.middleware) > 0 {
 		child.handler = compose(routerHandler{router: r}, parent.middleware)
