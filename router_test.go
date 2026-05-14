@@ -1,6 +1,7 @@
 package arc
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -1342,6 +1343,33 @@ func TestRequestPathValueVisibleToSubRouterMiddleware(t *testing.T) {
 	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
 		if got := req.PathValue("id"); got != "42" {
 			t.Fatalf("req.PathValue(id) = %q, want %q", got, "42")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestSubRouterDispatchSurvivesMiddlewareContextWrap(t *testing.T) {
+	type contextKey struct{}
+
+	r := New()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			ctx := context.WithValue(req.Context(), contextKey{}, "set")
+			next.ServeHTTP(w, req.WithContext(ctx))
+		})
+	})
+	api := r.SubRouter("/api/{version}")
+	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "version"); got != "v1" {
+			t.Fatalf("Param(version) = %q, want %q", got, "v1")
+		}
+		if got := Param(req, "id"); got != "42" {
+			t.Fatalf("Param(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})

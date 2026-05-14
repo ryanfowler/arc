@@ -424,11 +424,8 @@ func requestForHandler(req *http.Request, params match.Params, pattern string, r
 		return req
 	}
 
-	ctx := req.Context()
-	if !paramsMatch {
-		ctx = context.WithValue(ctx, requestParamsKey, params)
-	}
-	next := req.WithContext(ctx)
+	withParams := !paramsMatch
+	next := requestWithState(req, params, withParams, "", false, !pathValuesMatch)
 	if !pathValuesMatch {
 		setPathValues(next, params)
 	}
@@ -445,18 +442,13 @@ func requestForRouter(req *http.Request, path string, params match.Params, reque
 		return req
 	}
 
-	ctx := req.Context()
-	if !paramsMatch {
-		ctx = context.WithValue(ctx, requestParamsKey, params)
-	}
-	if !hasPath || currentPath != path {
-		ctx = context.WithValue(ctx, requestDispatchKey, path)
-	}
-	if ctx == req.Context() && pathValuesMatch {
+	withParams := !paramsMatch
+	withPath := !hasPath || currentPath != path
+	if !withParams && !withPath && pathValuesMatch {
 		return req
 	}
 
-	next := req.WithContext(ctx)
+	next := requestWithState(req, params, withParams, path, withPath, !pathValuesMatch)
 	if !pathValuesMatch {
 		setPathValues(next, params)
 	}
@@ -473,19 +465,14 @@ func requestForMount(req *http.Request, path string, params match.Params, patter
 		return req
 	}
 
-	ctx := req.Context()
-	if !paramsMatch {
-		ctx = context.WithValue(ctx, requestParamsKey, params)
-	}
-	if !hasPath || currentPath != path {
-		ctx = context.WithValue(ctx, requestDispatchKey, path)
-	}
-	if ctx == req.Context() && pathValuesMatch {
+	withParams := !paramsMatch
+	withPath := !hasPath || currentPath != path
+	if !withParams && !withPath && pathValuesMatch {
 		req.Pattern = pattern
 		return req
 	}
 
-	next := req.WithContext(ctx)
+	next := requestWithState(req, params, withParams, path, withPath, !pathValuesMatch)
 	if !pathValuesMatch {
 		setPathValues(next, params)
 	}
@@ -514,6 +501,75 @@ const (
 	requestDispatchKey
 )
 
+// Specialized contexts avoid context.WithValue's extra allocation while keeping
+// request params available through the standard Context.Value path.
+type requestParamsContext struct {
+	context.Context
+	params match.Params
+}
+
+func (ctx *requestParamsContext) Value(key any) any {
+	if key == requestParamsKey {
+		return ctx.params
+	}
+	return ctx.Context.Value(key)
+}
+
+type requestDispatchContext struct {
+	context.Context
+	path string
+}
+
+func (ctx *requestDispatchContext) Value(key any) any {
+	if key == requestDispatchKey {
+		return ctx.path
+	}
+	return ctx.Context.Value(key)
+}
+
+type requestStateContext struct {
+	context.Context
+	params match.Params
+	path   string
+}
+
+func (ctx *requestStateContext) Value(key any) any {
+	switch key {
+	case requestParamsKey:
+		return ctx.params
+	case requestDispatchKey:
+		return ctx.path
+	default:
+		return ctx.Context.Value(key)
+	}
+}
+
+func requestWithState(req *http.Request, params match.Params, withParams bool, path string, withPath bool, copyRequest bool) *http.Request {
+	if withParams && withPath {
+		return req.WithContext(&requestStateContext{
+			Context: req.Context(),
+			params:  params,
+			path:    path,
+		})
+	}
+	if withParams {
+		return req.WithContext(&requestParamsContext{
+			Context: req.Context(),
+			params:  params,
+		})
+	}
+	if withPath {
+		return req.WithContext(&requestDispatchContext{
+			Context: req.Context(),
+			path:    path,
+		})
+	}
+	if copyRequest {
+		return req.WithContext(req.Context())
+	}
+	return req
+}
+
 func dispatchState(req *http.Request) (string, match.Params) {
 	path, ok := dispatchPath(req)
 	if !ok {
@@ -523,8 +579,7 @@ func dispatchState(req *http.Request) (string, match.Params) {
 }
 
 func dispatchPath(req *http.Request) (string, bool) {
-	path, ok := req.Context().Value(requestDispatchKey).(string)
-	return path, ok
+	return dispatchPathFromContext(req.Context())
 }
 
 // Params returns the parameters captured while matching req.
@@ -534,8 +589,42 @@ func dispatchPath(req *http.Request) (string, bool) {
 // levels, the more specific match wins: route parameters override subrouter
 // parameters, and subrouter parameters override host parameters.
 func Params(req *http.Request) RequestParams {
-	params, _ := req.Context().Value(requestParamsKey).(RequestParams)
+	params, _ := paramsFromContext(req.Context())
 	return params
+}
+
+func paramsFromContext(ctx context.Context) (match.Params, bool) {
+	for {
+		switch current := ctx.(type) {
+		case *requestParamsContext:
+			return current.params, true
+		case *requestStateContext:
+			return current.params, true
+		case *requestDispatchContext:
+			ctx = current.Context
+			continue
+		default:
+			params, ok := ctx.Value(requestParamsKey).(RequestParams)
+			return params, ok
+		}
+	}
+}
+
+func dispatchPathFromContext(ctx context.Context) (string, bool) {
+	for {
+		switch current := ctx.(type) {
+		case *requestDispatchContext:
+			return current.path, true
+		case *requestStateContext:
+			return current.path, true
+		case *requestParamsContext:
+			ctx = current.Context
+			continue
+		default:
+			path, ok := ctx.Value(requestDispatchKey).(string)
+			return path, ok
+		}
+	}
 }
 
 // Param returns the named parameter captured while matching req.
