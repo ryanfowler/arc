@@ -1,6 +1,7 @@
 package arc
 
 import (
+	"net/http"
 	"strings"
 
 	"github.com/ryanfowler/match"
@@ -44,6 +45,59 @@ func (r *Router) SubRouterErr(pattern string) (*Router, error) {
 
 	r.hasSubRouters = true
 	return child.router, nil
+}
+
+// Mount registers h below pattern.
+//
+// The pattern uses the github.com/ryanfowler/match route grammar. Parameters
+// captured by the mount pattern are available to middleware and the mounted
+// handler.
+//
+// The mounted handler receives the remaining path after the mount point as
+// req.URL.Path. For example, a handler mounted at /assets receives /app.css for
+// a request to /assets/app.css, while both /assets and /assets/ are dispatched
+// as /. Middleware already registered on the parent sees the original request
+// path and wraps the mounted handler.
+//
+// Invalid, duplicate, or ambiguous mount patterns panic with the error returned
+// by match. Use MountErr to receive the registration error instead.
+func (r *Router) Mount(pattern string, h http.Handler) {
+	if err := r.MountErr(pattern, h); err != nil {
+		panic(err)
+	}
+}
+
+// MountErr registers h below pattern and returns registration errors.
+//
+// The pattern uses the github.com/ryanfowler/match route grammar. Registration
+// errors include invalid parameter syntax and mount conflicts reported by
+// match. A nil handler is treated as http.NotFoundHandler.
+func (r *Router) MountErr(pattern string, h http.Handler) error {
+	if h == nil {
+		h = http.NotFoundHandler()
+	}
+
+	pattern = cleanMountPattern(pattern)
+	child := &childRouter{
+		handler: compose(mountedHandler{handler: h}, r.middleware),
+		mounted: true,
+		pattern: pattern,
+	}
+	if err := r.subMounts.TryInsert(pattern, child); err != nil {
+		return err
+	}
+
+	r.hasSubRouters = true
+	return nil
+}
+
+type mountedHandler struct {
+	handler http.Handler
+}
+
+func (h mountedHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	path, _ := dispatchState(req)
+	h.handler.ServeHTTP(w, requestWithURLPath(req, path))
 }
 
 type mountMatcher struct {

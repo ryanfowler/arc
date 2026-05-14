@@ -895,6 +895,128 @@ func TestSubRouterBacktracksAcrossDifferentlyNamedParamMounts(t *testing.T) {
 	assertStatus(t, rec, http.StatusCreated)
 }
 
+func TestMountDispatchesHandlerWithRemainingPathAndParams(t *testing.T) {
+	r := New()
+	r.Mount("/tenants/{tenant}/assets", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if got := req.URL.Path; got != "/css/app.css" {
+			t.Fatalf("req.URL.Path = %q, want %q", got, "/css/app.css")
+		}
+		if got := req.URL.Query().Get("v"); got != "1" {
+			t.Fatalf("query v = %q, want %q", got, "1")
+		}
+		if got := Param(req, "tenant"); got != "acme" {
+			t.Fatalf("Param(tenant) = %q, want %q", got, "acme")
+		}
+		if got := req.PathValue("tenant"); got != "acme" {
+			t.Fatalf("req.PathValue(tenant) = %q, want %q", got, "acme")
+		}
+		if got := req.Pattern; got != "/tenants/{tenant}/assets" {
+			t.Fatalf("req.Pattern = %q, want %q", got, "/tenants/{tenant}/assets")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tenants/acme/assets/css/app.css?v=1", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestMountRootPaths(t *testing.T) {
+	for _, path := range []string{"/assets", "/assets/"} {
+		t.Run(path, func(t *testing.T) {
+			r := New()
+			r.Mount("/assets", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if got := req.URL.Path; got != "/" {
+					t.Fatalf("req.URL.Path = %q, want /", got)
+				}
+				w.WriteHeader(http.StatusCreated)
+			}))
+
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+
+			assertStatus(t, rec, http.StatusCreated)
+		})
+	}
+}
+
+func TestMountRunsParentMiddlewareBeforeRewritingPath(t *testing.T) {
+	var paths []string
+	r := New()
+	r.Use(pathMiddleware("parent", &paths))
+	r.Mount("/assets", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		paths = append(paths, "handler:"+req.URL.Path)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+	assertStrings(t, paths, []string{
+		"parent:/assets/app.css",
+		"handler:/app.css",
+	})
+}
+
+func TestMountSnapshotsParentMiddlewareAtRegistration(t *testing.T) {
+	var calls []string
+	r := New()
+	r.Use(namedMiddleware("before", &calls))
+	r.Mount("/assets", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		calls = append(calls, "handler")
+	}))
+	r.Use(namedMiddleware("after", &calls))
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
+
+	assertStrings(t, calls, []string{"before before", "handler", "before after"})
+}
+
+func TestMountNilHandlerUsesNotFoundHandler(t *testing.T) {
+	r := New()
+	r.Mount("/nil", nil)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/nil", nil))
+
+	assertStatus(t, rec, http.StatusNotFound)
+}
+
+func TestMountErrReturnsMatchErrors(t *testing.T) {
+	r := New()
+	if err := r.MountErr("/users/{}", writeStatus(http.StatusNoContent)); !errors.Is(err, match.ErrInvalidParam) {
+		t.Fatalf("MountErr invalid param error = %v, want ErrInvalidParam", err)
+	}
+	if r.hasSubRouters {
+		t.Fatal("router hasSubRouters = true after failed first MountErr, want false")
+	}
+
+	if err := r.MountErr("/api/{name}.json", writeStatus(http.StatusAccepted)); err != nil {
+		t.Fatalf("MountErr valid mount error = %v", err)
+	}
+
+	var conflict *match.ConflictError
+	if err := r.MountErr("/api/v{version}.json", writeStatus(http.StatusCreated)); !errors.As(err, &conflict) {
+		t.Fatalf("MountErr conflict error = %v, want *match.ConflictError", err)
+	}
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/foo.json", nil))
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestMountConflictsWithSubRouter(t *testing.T) {
+	r := New()
+	r.SubRouter("/api/{name}.json")
+
+	var conflict *match.ConflictError
+	if err := r.MountErr("/api/v{version}.json", writeStatus(http.StatusCreated)); !errors.As(err, &conflict) {
+		t.Fatalf("MountErr conflict error = %v, want *match.ConflictError", err)
+	}
+}
+
 func TestHostRouterMatchesAndMergesParams(t *testing.T) {
 	r := New()
 	tenant := r.Host("{tenant}.example.com")

@@ -69,6 +69,8 @@ type routeMethods struct {
 type childRouter struct {
 	router  *Router
 	handler http.Handler
+	mounted bool
+	pattern string
 }
 
 type routerHandler struct {
@@ -370,6 +372,10 @@ func newChildRouter(parent *Router) *childRouter {
 }
 
 func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path string, params match.Params) {
+	if c.mounted {
+		c.handler.ServeHTTP(w, requestForMount(req, path, params, c.pattern))
+		return
+	}
 	if c.handler != nil {
 		c.handler.ServeHTTP(w, requestForRouter(req, path, params))
 		return
@@ -442,6 +448,50 @@ func requestForRouter(req *http.Request, path string, params match.Params) *http
 	if !pathValuesMatch {
 		setPathValues(next, params)
 	}
+	return next
+}
+
+func requestForMount(req *http.Request, path string, params match.Params, pattern string) *http.Request {
+	currentParams := Params(req)
+	currentPath, hasPath := dispatchPath(req)
+	paramsMatch := paramsEqual(currentParams, params)
+	pathValuesMatch := pathValuesEqual(req, params)
+	if paramsMatch && pathValuesMatch && hasPath && currentPath == path {
+		req.Pattern = pattern
+		return req
+	}
+
+	ctx := req.Context()
+	if !paramsMatch {
+		ctx = context.WithValue(ctx, requestParamsKey, params)
+	}
+	if !hasPath || currentPath != path {
+		ctx = context.WithValue(ctx, requestDispatchKey, path)
+	}
+	if ctx == req.Context() && pathValuesMatch {
+		req.Pattern = pattern
+		return req
+	}
+
+	next := req.WithContext(ctx)
+	if !pathValuesMatch {
+		setPathValues(next, params)
+	}
+	next.Pattern = pattern
+	return next
+}
+
+func requestWithURLPath(req *http.Request, path string) *http.Request {
+	if req.URL.Path == path {
+		return req
+	}
+
+	next := new(http.Request)
+	*next = *req
+	url := *req.URL
+	url.Path = path
+	url.RawPath = ""
+	next.URL = &url
 	return next
 }
 

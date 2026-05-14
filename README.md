@@ -150,6 +150,22 @@ A subrouter matches using the remaining path after the mount point. For example,
 `/api/` are dispatched to the child router's `/` route. The request URL is not
 rewritten; middleware and handlers still see the original `req.URL.Path`.
 
+## Mounted Handlers
+
+`Mount` attaches any `http.Handler` below a pattern.
+
+```go
+r := arc.New()
+
+r.Mount("/tenants/{tenant}/assets", http.FileServerFS(assets))
+```
+
+Mounted handlers receive the remaining path after the mount point as
+`req.URL.Path`. For example, a handler mounted at `/assets` receives `/app.css`
+for a request to `/assets/app.css`, while both `/assets` and `/assets/` are
+dispatched as `/`. Mount parameters are available with `arc.Param` and
+`req.PathValue`.
+
 ## Host Routing
 
 `Host` returns a child router that only handles matching request hosts.
@@ -191,14 +207,14 @@ and can also configure their own handlers.
 
 ## Registration Errors
 
-Route, subrouter, and host registration helpers panic if a pattern is invalid,
-duplicated, or ambiguous:
+Route, mount, subrouter, and host registration helpers panic if a pattern is
+invalid, duplicated, or ambiguous:
 
 ```go
 r.Get("/users/{id}", getUser)
 ```
 
-Use `HandleErr`, `SubRouterErr`, or `HostErr` when you want to handle
+Use `HandleErr`, `MountErr`, `SubRouterErr`, or `HostErr` when you want to handle
 registration errors explicitly:
 
 ```go
@@ -208,6 +224,10 @@ if err := r.HandleErr(http.MethodGet, "/users/{id}", http.HandlerFunc(getUser));
 
 api, err := r.SubRouterErr("/api/{version}")
 if err != nil {
+	return err
+}
+
+if err := r.MountErr("/assets", http.FileServerFS(assets)); err != nil {
 	return err
 }
 
