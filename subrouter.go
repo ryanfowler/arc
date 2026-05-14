@@ -20,6 +20,8 @@ import (
 //
 // Middleware already registered on the parent wraps the child router.
 // Middleware added to the child applies only inside the child router.
+// The child copies the parent's current strict slash, request path value, and
+// fallback handler settings when it is created.
 //
 // Invalid, duplicate, or ambiguous mount patterns panic with the error returned
 // by match. Use SubRouterErr to receive the registration error instead.

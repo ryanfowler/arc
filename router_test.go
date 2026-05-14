@@ -579,6 +579,31 @@ func TestSubRouterInheritsStrictSlashSetting(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestSubRouterSnapshotsStrictSlashSetting(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api")
+	r.SetStrictSlash(false)
+	api.Get("/users/{id}", writeStatus(http.StatusAccepted))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/users/42/", nil))
+
+	assertStatus(t, rec, http.StatusNotFound)
+}
+
+func TestSubRouterCanConfigureStrictSlashIndependently(t *testing.T) {
+	r := New()
+	r.SetStrictSlash(false)
+	api := r.SubRouter("/api")
+	api.SetStrictSlash(true)
+	api.Get("/users/{id}", writeStatus(http.StatusAccepted))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/users/42/", nil))
+
+	assertStatus(t, rec, http.StatusNotFound)
+}
+
 func TestSubRouterPreservesQuery(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api")
@@ -620,6 +645,22 @@ func TestSubRouterReturnsChildNotFoundAndMethodNotAllowed(t *testing.T) {
 	methodNotAllowed := httptest.NewRecorder()
 	r.ServeHTTP(methodNotAllowed, httptest.NewRequest(http.MethodPost, "/api/known", nil))
 	assertStatus(t, methodNotAllowed, http.StatusConflict)
+}
+
+func TestSubRouterSnapshotsFallbackHandlers(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api")
+	api.Get("/known", writeStatus(http.StatusNoContent))
+	r.SetNotFound(http.HandlerFunc(writeStatus(http.StatusTeapot)))
+	r.SetMethodNotAllowed(http.HandlerFunc(writeStatus(http.StatusConflict)))
+
+	notFound := httptest.NewRecorder()
+	r.ServeHTTP(notFound, httptest.NewRequest(http.MethodGet, "/api/missing", nil))
+	assertStatus(t, notFound, http.StatusNotFound)
+
+	methodNotAllowed := httptest.NewRecorder()
+	r.ServeHTTP(methodNotAllowed, httptest.NewRequest(http.MethodPost, "/api/known", nil))
+	assertStatus(t, methodNotAllowed, http.StatusMethodNotAllowed)
 }
 
 func TestSubRouterCanConfigureFallbackHandlers(t *testing.T) {
@@ -1225,6 +1266,18 @@ func TestHostRouterInheritsStrictSlashSetting(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestHostRouterSnapshotsStrictSlashSetting(t *testing.T) {
+	r := New()
+	api := r.Host("api.example.com")
+	r.SetStrictSlash(false)
+	api.Get("/users/{id}", writeStatus(http.StatusAccepted))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://api.example.com/users/42/", nil))
+
+	assertStatus(t, rec, http.StatusNotFound)
+}
+
 func TestHostRouterRunsParentAndChildMiddleware(t *testing.T) {
 	var calls []string
 	r := New()
@@ -1467,6 +1520,67 @@ func TestRequestPathValueMergePrecedence(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://host.example.com/sub/route", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestSubRouterSnapshotsRequestPathValueSetting(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api/{version}")
+	r.SetRequestPathValues(true)
+	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("version"); got != "" {
+			t.Fatalf("req.PathValue(version) = %q, want empty", got)
+		}
+		if got := req.PathValue("id"); got != "" {
+			t.Fatalf("req.PathValue(id) = %q, want empty", got)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestHostRouterSnapshotsRequestPathValueSetting(t *testing.T) {
+	r := New()
+	api := r.Host("{tenant}.example.com")
+	r.SetRequestPathValues(true)
+	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("tenant"); got != "" {
+			t.Fatalf("req.PathValue(tenant) = %q, want empty", got)
+		}
+		if got := req.PathValue("id"); got != "" {
+			t.Fatalf("req.PathValue(id) = %q, want empty", got)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://acme.example.com/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestSubRouterCanConfigureRequestPathValuesIndependently(t *testing.T) {
+	r := New()
+	r.SetRequestPathValues(true)
+	api := r.SubRouter("/api/{version}")
+	api.SetRequestPathValues(false)
+	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("version"); got != "" {
+			t.Fatalf("req.PathValue(version) = %q, want empty", got)
+		}
+		if got := req.PathValue("id"); got != "" {
+			t.Fatalf("req.PathValue(id) = %q, want empty", got)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/users/42", nil))
 
 	assertStatus(t, rec, http.StatusAccepted)
 }

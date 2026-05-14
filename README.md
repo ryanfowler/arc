@@ -152,6 +152,25 @@ r.Get("/healthz", health)
 Middleware applies to routes, subrouters, and host routers registered after the
 call to `Use`. Middleware runs in registration order.
 
+## Configuration Order
+
+Use router setters for routing behavior that should apply consistently:
+
+```go
+r := arc.New()
+r.SetStrictSlash(false)
+r.SetRequestPathValues(true)
+```
+
+Subrouters and host routers snapshot parent settings when they are created.
+Calls to `SetStrictSlash`, `SetRequestPathValues`, `SetNotFound`, or
+`SetMethodNotAllowed` after creating a child do not affect that existing child.
+Call those setters before `SubRouter` or `Host` when you want a child to start
+with the same behavior.
+
+Middleware follows the same registration-order model: `Use` only wraps routes,
+subrouters, and host routers registered after the call.
+
 ## Subrouters
 
 `SubRouter` returns another `*arc.Router` mounted below a pattern.

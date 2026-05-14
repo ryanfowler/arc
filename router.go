@@ -89,6 +89,9 @@ func (h routerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 //
 // By default, unmatched requests use http.NotFoundHandler and requests whose
 // path matches a route registered for a different method receive status 405.
+//
+// Child routers and host routers copy the parent router's current settings when
+// they are created.
 func New() *Router {
 	return &Router{
 		routes:           make(map[string]*match.Router[*route]),
@@ -126,6 +129,9 @@ func (r *Router) SetMethodNotAllowed(h http.Handler) {
 // Strict slash matching is enabled by default. When disabled, a request path
 // ending in "/" may match a route registered without that final slash. Exact
 // route matches still take precedence.
+//
+// Subrouters and host routers copy this setting when they are created. Later
+// changes on the parent do not affect existing children.
 func (r *Router) SetStrictSlash(strict bool) {
 	r.strictSlash = strict
 }
@@ -136,6 +142,9 @@ func (r *Router) SetStrictSlash(strict bool) {
 // Request path values are disabled by default. Enable this when middleware or
 // handlers need to read route parameters with req.PathValue instead of arc.Param
 // or arc.Params.
+//
+// Subrouters and host routers copy this setting when they are created. Later
+// changes on the parent do not affect existing children.
 func (r *Router) SetRequestPathValues(enabled bool) {
 	r.requestPathValues = enabled
 }
