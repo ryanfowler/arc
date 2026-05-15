@@ -14,6 +14,6 @@
 // Arc matches paths using req.URL.Path as parsed by net/http. It does not use
 // URL.RawPath or URL.EscapedPath, and it does not perform net/http.ServeMux
 // path cleaning redirects for dot segments or repeated slashes. GET routes
-// handle HEAD requests by default when no explicit HEAD route matches; use
-// Router.SetImplicitHead to disable that behavior.
+// handle HEAD requests by default when no explicit HEAD or any-method route
+// matches; use Router.SetImplicitHead to disable that behavior.
 package arc

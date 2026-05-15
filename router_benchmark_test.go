@@ -47,7 +47,7 @@ func BenchmarkRouterHandle(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				r := New()
 				for route := 0; route < routeCount; route++ {
-					r.Handle(http.MethodGet, "/users/"+strconv.Itoa(route)+"/posts/{id}", handler)
+					r.Handle("/users/"+strconv.Itoa(route)+"/posts/{id}", handler)
 				}
 			}
 		})

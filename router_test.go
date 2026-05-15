@@ -241,6 +241,44 @@ func TestRouterAllowsSamePatternForDifferentMethods(t *testing.T) {
 	}
 }
 
+func TestRouterHandleMatchesAnyMethod(t *testing.T) {
+	r := New()
+	r.Handle("/resource", writeStatus(http.StatusNoContent))
+
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch} {
+		t.Run(method, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(method, "/resource", nil))
+			assertStatus(t, rec, http.StatusNoContent)
+		})
+	}
+}
+
+func TestRouterHandleUsesPathSpecificityBeforeMethod(t *testing.T) {
+	r := New()
+	r.Get("/users/{id}", writeStatus(http.StatusAccepted))
+	r.Handle("/users/me", writeStatus(http.StatusNoContent))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/users/me", nil))
+
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func TestRouterMethodRouteWinsOverAnyMethodForSamePattern(t *testing.T) {
+	r := New()
+	r.Handle("/resource", writeStatus(http.StatusNoContent))
+	r.Post("/resource", writeStatus(http.StatusCreated))
+
+	post := httptest.NewRecorder()
+	r.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/resource", nil))
+	assertStatus(t, post, http.StatusCreated)
+
+	get := httptest.NewRecorder()
+	r.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/resource", nil))
+	assertStatus(t, get, http.StatusNoContent)
+}
+
 func TestRouterMethodNotAllowedAllowHeaderIncludesRegisteredMethods(t *testing.T) {
 	r := New()
 	r.Post("/resource/{id}", writeStatus(http.StatusCreated))
@@ -321,6 +359,17 @@ func TestRouterExplicitHeadWinsOverImplicitGet(t *testing.T) {
 	r := New()
 	r.Get("/resource", writeStatus(http.StatusAccepted))
 	r.Head("/resource", writeStatus(http.StatusNoContent))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/resource", nil))
+
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func TestRouterAnyMethodWinsOverImplicitHead(t *testing.T) {
+	r := New()
+	r.Get("/resource", writeStatus(http.StatusAccepted))
+	r.Handle("/resource", writeStatus(http.StatusNoContent))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/resource", nil))
@@ -438,29 +487,29 @@ func TestRouterSetFallbackHandlersIgnoreNil(t *testing.T) {
 
 func TestHandleErrReturnsMatchErrors(t *testing.T) {
 	r := New()
-	if err := r.HandleErr(http.MethodGet, "/users/{}", writeStatus(http.StatusNoContent)); !errors.Is(err, match.ErrInvalidParam) {
+	if err := r.HandleErr("/users/{}", writeStatus(http.StatusNoContent)); !errors.Is(err, match.ErrInvalidParam) {
 		t.Fatalf("HandleErr invalid param error = %v, want ErrInvalidParam", err)
 	}
 
-	if err := r.HandleErr(http.MethodGet, "/users/{id}", writeStatus(http.StatusNoContent)); err != nil {
+	if err := r.HandleErr("/users/{id}", writeStatus(http.StatusNoContent)); err != nil {
 		t.Fatalf("HandleErr valid route error = %v", err)
 	}
 
 	var conflict *match.ConflictError
-	if err := r.HandleErr(http.MethodGet, "/users/{name}", writeStatus(http.StatusNoContent)); !errors.As(err, &conflict) {
+	if err := r.HandleErr("/users/{name}", writeStatus(http.StatusNoContent)); !errors.As(err, &conflict) {
 		t.Fatalf("HandleErr conflict error = %v, want *match.ConflictError", err)
 	}
 }
 
-func TestHandleErrDoesNotPartiallyRegisterFailedRoute(t *testing.T) {
+func TestHandleMethodErrDoesNotPartiallyRegisterFailedRoute(t *testing.T) {
 	r := New()
-	if err := r.HandleErr(http.MethodGet, "/users/{id}", writeStatus(http.StatusNoContent)); err != nil {
-		t.Fatalf("HandleErr valid route error = %v", err)
+	if err := r.HandleMethodErr(http.MethodGet, "/users/{id}", writeStatus(http.StatusNoContent)); err != nil {
+		t.Fatalf("HandleMethodErr valid route error = %v", err)
 	}
 
 	var conflict *match.ConflictError
-	if err := r.HandleErr(http.MethodPost, "/users/{name}", writeStatus(http.StatusCreated)); !errors.As(err, &conflict) {
-		t.Fatalf("HandleErr conflict error = %v, want *match.ConflictError", err)
+	if err := r.HandleMethodErr(http.MethodPost, "/users/{name}", writeStatus(http.StatusCreated)); !errors.As(err, &conflict) {
+		t.Fatalf("HandleMethodErr conflict error = %v, want *match.ConflictError", err)
 	}
 
 	rec := httptest.NewRecorder()
@@ -472,16 +521,16 @@ func TestHandleErrDoesNotPartiallyRegisterFailedRoute(t *testing.T) {
 	}
 }
 
-func TestHandleErrDuplicateDoesNotCorruptRouteTables(t *testing.T) {
+func TestHandleMethodErrDuplicateDoesNotCorruptRouteTables(t *testing.T) {
 	r := New()
-	if err := r.HandleErr(http.MethodGet, "/resource", writeStatus(http.StatusNoContent)); err != nil {
-		t.Fatalf("HandleErr valid route error = %v", err)
+	if err := r.HandleMethodErr(http.MethodGet, "/resource", writeStatus(http.StatusNoContent)); err != nil {
+		t.Fatalf("HandleMethodErr valid route error = %v", err)
 	}
-	if err := r.HandleErr(http.MethodGet, "/resource", writeStatus(http.StatusAccepted)); err == nil {
-		t.Fatal("HandleErr duplicate route error = nil, want error")
+	if err := r.HandleMethodErr(http.MethodGet, "/resource", writeStatus(http.StatusAccepted)); err == nil {
+		t.Fatal("HandleMethodErr duplicate route error = nil, want error")
 	}
-	if err := r.HandleErr(http.MethodPost, "/resource", writeStatus(http.StatusCreated)); err != nil {
-		t.Fatalf("HandleErr post route error = %v", err)
+	if err := r.HandleMethodErr(http.MethodPost, "/resource", writeStatus(http.StatusCreated)); err != nil {
+		t.Fatalf("HandleMethodErr post route error = %v", err)
 	}
 
 	get := httptest.NewRecorder()
@@ -503,12 +552,12 @@ func TestHandlePanicsForInvalidPattern(t *testing.T) {
 		}
 	}()
 
-	New().Handle(http.MethodGet, "/users/{}", writeStatus(http.StatusNoContent))
+	New().Handle("/users/{}", writeStatus(http.StatusNoContent))
 }
 
 func TestNilHandlerUsesNotFoundHandler(t *testing.T) {
 	r := New()
-	r.Handle(http.MethodGet, "/nil", nil)
+	r.Handle("/nil", nil)
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/nil", nil))

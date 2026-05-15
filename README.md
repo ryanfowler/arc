@@ -58,6 +58,15 @@ r.Get("/users/{id}", getUser)
 r.Get("/assets/{*path}", serveAsset)
 ```
 
+Use `Handle` or `HandleFunc` when a route should match any request method:
+
+```go
+r.Handle("/healthz", http.HandlerFunc(health))
+```
+
+Use `HandleMethod`, `HandleMethodFunc`, or the method helpers like `Get` and
+`Post` when a route should match a specific method.
+
 Route matching is strict about trailing slashes by default, so `/users/42/`
 does not match `/users/{id}`. Disable strict slash matching when you want a
 single trailing slash to be accepted by routes registered without one:
@@ -72,8 +81,8 @@ Exact route matches still take precedence when strict slash matching is
 disabled. If both `/users/{id}` and `/users/{id}/` are registered, a request for
 `/users/42/` uses the explicit trailing-slash route.
 
-GET routes handle HEAD requests by default when no explicit HEAD route matches.
-Disable that when you need strict method matching:
+GET routes handle HEAD requests by default when no explicit HEAD or any-method
+route matches. Disable that when you need strict method matching:
 
 ```go
 r := arc.New()
@@ -269,11 +278,11 @@ invalid, duplicated, or ambiguous:
 r.Get("/users/{id}", getUser)
 ```
 
-Use `HandleErr`, `MountErr`, `SubRouterErr`, or `HostErr` when you want to handle
-registration errors explicitly:
+Use `HandleErr`, `HandleMethodErr`, `MountErr`, `SubRouterErr`, or `HostErr`
+when you want to handle registration errors explicitly:
 
 ```go
-if err := r.HandleErr(http.MethodGet, "/users/{id}", http.HandlerFunc(getUser)); err != nil {
+if err := r.HandleMethodErr(http.MethodGet, "/users/{id}", http.HandlerFunc(getUser)); err != nil {
 	return err
 }
 

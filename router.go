@@ -32,14 +32,12 @@ type RequestParams = match.Params
 // registration and configuration methods are not safe to call concurrently with
 // ServeHTTP or with other registration and configuration methods.
 type Router struct {
-	routeRegistrations []routeRegistration
-	routes             map[string]*match.Router[*route]
-	methodRoutes       match.Router[*routeMethods]
-	routeMethods       map[string]*routeMethods
-	subMounts          match.Router[*childRouter]
-	hostRoutes         match.Router[*childRouter]
-	hasHosts           bool
-	hasSubRouters      bool
+	methodRoutes  match.Router[*routeMethods]
+	routeMethods  map[string]*routeMethods
+	subMounts     match.Router[*childRouter]
+	hostRoutes    match.Router[*childRouter]
+	hasHosts      bool
+	hasSubRouters bool
 
 	middleware []Middleware
 
@@ -59,6 +57,7 @@ type route struct {
 
 type routeRegistration struct {
 	method      string
+	anyMethod   bool
 	pattern     string
 	fullPattern string
 	route       *route
@@ -66,6 +65,8 @@ type routeRegistration struct {
 
 type routeMethods struct {
 	methods           []string
+	routes            map[string]*route
+	anyRoute          *route
 	allow             string
 	allowImplicitHead string
 	pattern           string
@@ -91,13 +92,13 @@ func (h routerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 //
 // By default, unmatched requests use http.NotFoundHandler and requests whose
 // path matches a route registered for a different method receive status 405.
-// GET routes also handle HEAD requests unless an explicit HEAD route matches.
+// GET routes also handle HEAD requests unless an explicit HEAD or any-method
+// route matches.
 //
 // Child routers and host routers copy the parent router's current settings when
 // they are created.
 func New() *Router {
 	return &Router{
-		routes:           make(map[string]*match.Router[*route]),
 		routeMethods:     make(map[string]*routeMethods),
 		notFound:         http.NotFoundHandler(),
 		methodNotAllowed: http.HandlerFunc(defaultMethodNotAllowed),
@@ -128,10 +129,10 @@ func (r *Router) SetMethodNotAllowed(h http.Handler) {
 }
 
 // SetImplicitHead configures whether HEAD requests may use GET routes when no
-// explicit HEAD route matches.
+// explicit HEAD or any-method route matches.
 //
-// Implicit HEAD matching is enabled by default. Explicit HEAD routes always take
-// precedence when present.
+// Implicit HEAD matching is enabled by default. Explicit HEAD and any-method
+// routes take precedence when present.
 func (r *Router) SetImplicitHead(enabled bool) {
 	r.implicitHead = enabled
 }
@@ -205,12 +206,6 @@ func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, pa
 		return
 	}
 
-	if methods, routeParams, ok := r.matchMethodRoute(path); ok {
-		w.Header().Set("Allow", methods.allowHeader(r.implicitHead))
-		r.methodNotAllowed.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams), methods.pattern, r.requestPathValues))
-		return
-	}
-
 	r.notFound.ServeHTTP(w, requestForHandler(req, params, "", r.requestPathValues))
 }
 
@@ -248,43 +243,19 @@ func (r *Router) serveSubRouter(w http.ResponseWriter, req *http.Request, path s
 }
 
 func (r *Router) serveRoute(w http.ResponseWriter, req *http.Request, path string, params match.Params) bool {
-	if r.serveMethodRoute(w, req, path, params, req.Method) {
-		return true
-	}
-	if req.Method == http.MethodHead && r.implicitHead {
-		return r.serveMethodRoute(w, req, path, params, http.MethodGet)
-	}
-	return false
-}
-
-func (r *Router) serveMethodRoute(w http.ResponseWriter, req *http.Request, path string, params match.Params, method string) bool {
-	routes := r.routes[method]
-	if routes == nil {
-		return false
-	}
-
-	route, routeParams, ok := r.matchRoute(routes, path)
+	methods, routeParams, ok := r.matchMethodRoute(path)
 	if !ok {
 		return false
+	}
+	route := methods.routeFor(req.Method, r.implicitHead)
+	if route == nil {
+		w.Header().Set("Allow", methods.allowHeader(r.implicitHead))
+		r.methodNotAllowed.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams), methods.pattern, r.requestPathValues))
+		return true
 	}
 
 	route.handler.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams), route.pattern, r.requestPathValues))
 	return true
-}
-
-func (r *Router) matchRoute(routes *match.Router[*route], path string) (*route, match.Params, bool) {
-	route, params, ok := routes.Match(path)
-	if ok {
-		return route, params, true
-	}
-	if path, ok = r.relaxedSlashPath(path); !ok {
-		return nil, match.Params{}, false
-	}
-	route, params, ok = routes.Match(path)
-	if !ok || routePatternEndsInSlash(route.pattern) {
-		return nil, match.Params{}, false
-	}
-	return route, params, true
 }
 
 func (r *Router) matchMethodRoute(path string) (*routeMethods, match.Params, bool) {
@@ -329,73 +300,55 @@ func joinPatterns(prefix, pattern string) string {
 	return prefix + "/" + pattern
 }
 
-func (r *Router) insertMethodRoute(reg routeRegistration) error {
-	routes := r.routes[reg.method]
-	if routes != nil {
-		return routes.TryInsert(reg.pattern, reg.route)
+func (r *Router) insertRoute(reg routeRegistration) error {
+	return insertRouteRegistration(&r.methodRoutes, r.routeMethods, reg)
+}
+
+func insertRouteRegistration(methodRoutes *match.Router[*routeMethods], methodsByPattern map[string]*routeMethods, reg routeRegistration) error {
+	methods := methodsByPattern[reg.pattern]
+	if methods == nil {
+		methods = &routeMethods{pattern: reg.fullPattern}
+		if err := methodRoutes.TryInsert(reg.pattern, methods); err != nil {
+			return err
+		}
+		methodsByPattern[reg.pattern] = methods
 	}
 
-	routes = &match.Router[*route]{}
-	if err := routes.TryInsert(reg.pattern, reg.route); err != nil {
-		return err
+	return methods.addRoute(reg)
+}
+
+func (m *routeMethods) addRoute(reg routeRegistration) error {
+	if reg.anyMethod {
+		if m.anyRoute != nil {
+			return &match.ConflictError{Route: reg.pattern, With: reg.pattern}
+		}
+		m.anyRoute = reg.route
+		return nil
 	}
-	r.routes[reg.method] = routes
+
+	if m.routes == nil {
+		m.routes = make(map[string]*route)
+	}
+	if m.routes[reg.method] != nil {
+		return &match.ConflictError{Route: reg.pattern, With: reg.pattern}
+	}
+
+	m.routes[reg.method] = reg.route
+	m.add(reg.method)
 	return nil
 }
 
-func (r *Router) rebuildRouteTables() {
-	routes, methodRoutes, routeMethods, err := buildRouteTables(r.routeRegistrations)
-	if err != nil {
-		panic(err)
+func (m *routeMethods) routeFor(method string, implicitHead bool) *route {
+	if route := m.routes[method]; route != nil {
+		return route
 	}
-	r.routes = routes
-	r.methodRoutes = methodRoutes
-	r.routeMethods = routeMethods
-}
-
-func buildRouteTables(registrations []routeRegistration) (map[string]*match.Router[*route], match.Router[*routeMethods], map[string]*routeMethods, error) {
-	routes := make(map[string]*match.Router[*route])
-	methodsByPattern := make(map[string]*routeMethods)
-	var methodRoutes match.Router[*routeMethods]
-
-	for _, reg := range registrations {
-		methodRouter := routes[reg.method]
-		if methodRouter == nil {
-			methodRouter = &match.Router[*route]{}
-			routes[reg.method] = methodRouter
-		}
-		if err := methodRouter.TryInsert(reg.pattern, reg.route); err != nil {
-			return nil, match.Router[*routeMethods]{}, nil, err
-		}
-
-		methods := methodsByPattern[reg.pattern]
-		if methods == nil {
-			methods = &routeMethods{pattern: reg.fullPattern}
-			if err := methodRoutes.TryInsert(reg.pattern, methods); err != nil {
-				return nil, match.Router[*routeMethods]{}, nil, err
-			}
-			methodsByPattern[reg.pattern] = methods
-		}
-		methods.add(reg.method)
+	if m.anyRoute != nil {
+		return m.anyRoute
 	}
-
-	return routes, methodRoutes, methodsByPattern, nil
-}
-
-func (r *Router) addRouteMethod(pattern, method string) (*routeMethods, error) {
-	methods := r.routeMethods[pattern]
-	if methods != nil {
-		methods.add(method)
-		return methods, nil
+	if method == http.MethodHead && implicitHead {
+		return m.routes[http.MethodGet]
 	}
-
-	methods = &routeMethods{pattern: joinPatterns(r.patternPrefix, pattern)}
-	if err := r.methodRoutes.TryInsert(pattern, methods); err != nil {
-		return nil, err
-	}
-	methods.add(method)
-	r.routeMethods[pattern] = methods
-	return methods, nil
+	return nil
 }
 
 func (m *routeMethods) add(method string) {
