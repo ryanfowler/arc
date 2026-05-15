@@ -11,23 +11,25 @@ import (
 	"github.com/ryanfowler/match"
 )
 
-// Middleware wraps an HTTP handler.
+// Middleware wraps an HTTP handler for routes registered on a Router.
 //
-// Middleware is composed in registration order. If a router uses middleware a,
-// b, and c, requests flow through a, then b, then c, then the matched handler.
+// Middleware uses the same shape as standard net/http middleware. If a router
+// uses middleware a, b, and c, requests flow through a, then b, then c, then the
+// matched handler.
 type Middleware func(http.Handler) http.Handler
 
-// RequestParams contains parameters captured while matching a request.
+// RequestParams is the parameter set captured while matching a request.
 //
-// RequestParams aliases match.Params, so callers can use match's Len, At, Get,
-// TryGet, Seq, AppendTo, and All methods directly.
+// RequestParams aliases match.Params, so application code can use match's Len,
+// At, Get, TryGet, Seq, AppendTo, and All methods directly.
 type RequestParams = match.Params
 
-// Router routes HTTP requests by host, path, and method.
+// Router is an http.Handler that dispatches application requests by host, path,
+// and method.
 //
-// Router implements http.Handler. Build a router by configuring fallback
-// handlers and registering middleware, host routers, subrouters, and routes,
-// then pass it to http.Server or http.ListenAndServe.
+// Build a router during startup by configuring fallback handlers and
+// registering middleware, host routers, subrouters, mounted handlers, and
+// routes. After it is built, pass it to http.Server or http.ListenAndServe.
 //
 // A Router is safe for concurrent serving after registration is complete. The
 // registration and configuration methods are not safe to call concurrently with
@@ -89,12 +91,13 @@ func (h routerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	h.router.serve(w, req, path, params, decodeParams)
 }
 
-// New returns an initialized Router.
+// New creates a Router with defaults suitable for a typical net/http
+// application.
 //
 // By default, unmatched requests use http.NotFoundHandler and requests whose
-// path matches a route registered for a different method receive status 405.
-// GET routes also handle HEAD requests unless an explicit HEAD or any-method
-// route matches.
+// path matches a route registered for a different method receive
+// 405 Method Not Allowed. GET routes also handle HEAD requests unless an
+// explicit HEAD or any-method route matches.
 //
 // Child routers and host routers copy the parent router's current settings when
 // they are created.
@@ -108,8 +111,8 @@ func New() *Router {
 	}
 }
 
-// SetNotFound configures the handler used when no host, subrouter, or route
-// matches a request.
+// SetNotFound sets the application handler used when no host, subrouter,
+// mounted handler, or route matches a request.
 //
 // Passing nil leaves the router's existing not-found handler unchanged.
 func (r *Router) SetNotFound(h http.Handler) {
@@ -118,8 +121,8 @@ func (r *Router) SetNotFound(h http.Handler) {
 	}
 }
 
-// SetMethodNotAllowed configures the handler used when a request path matches a
-// route pattern, but the request method was not registered for that pattern.
+// SetMethodNotAllowed sets the handler used when a request path matches a route
+// pattern, but the request method was not registered for that pattern.
 //
 // Passing nil leaves the router's existing method-not-allowed handler
 // unchanged.
@@ -129,7 +132,7 @@ func (r *Router) SetMethodNotAllowed(h http.Handler) {
 	}
 }
 
-// SetImplicitHead configures whether HEAD requests may use GET routes when no
+// SetImplicitHead controls whether HEAD requests may use GET routes when no
 // explicit HEAD or any-method route matches.
 //
 // Implicit HEAD matching is enabled by default. Explicit HEAD and any-method
@@ -138,7 +141,7 @@ func (r *Router) SetImplicitHead(enabled bool) {
 	r.implicitHead = enabled
 }
 
-// SetStrictSlash configures whether route matching treats a trailing slash as
+// SetStrictSlash controls whether route matching treats a trailing slash as
 // significant.
 //
 // Strict slash matching is enabled by default. When disabled, a request path
@@ -151,7 +154,7 @@ func (r *Router) SetStrictSlash(strict bool) {
 	r.strictSlash = strict
 }
 
-// SetRequestPathValues configures whether captured parameters are mirrored to
+// SetRequestPathValues controls whether captured parameters are mirrored to
 // http.Request.PathValue.
 //
 // Request path values are disabled by default. Enable this when middleware or
@@ -168,12 +171,12 @@ func defaultMethodNotAllowed(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusMethodNotAllowed)
 }
 
-// Use appends middleware to the router.
+// Use appends middleware to routes registered later on the router.
 //
-// Middleware applies only to routes, subrouters, and host routers registered
-// after the call to Use. This lets callers build separate sections of a router
-// with different middleware stacks. Middleware is executed in the order it is
-// added. Use panics if any middleware is nil.
+// Middleware applies only to routes, subrouters, host routers, and mounted
+// handlers registered after the call to Use. This lets applications build
+// separate sections of a router with different middleware stacks. Middleware is
+// executed in the order it is added. Use panics if any middleware is nil.
 func (r *Router) Use(mw ...Middleware) {
 	for _, m := range mw {
 		if m == nil {
@@ -183,8 +186,8 @@ func (r *Router) Use(mw ...Middleware) {
 	}
 }
 
-// ServeHTTP dispatches req to the best matching host router, subrouter, or
-// route.
+// ServeHTTP dispatches req to the best matching host router, subrouter, mounted
+// handler, or route.
 //
 // Route and subrouter matching uses req.URL.Path unless req.URL.RawPath
 // preserves an escaped slash. In that case, Arc matches the escaped path so the
@@ -729,9 +732,10 @@ func dispatchDecodeParams(req *http.Request) bool {
 // Params returns the parameters captured while matching req.
 //
 // The returned value is empty when the request did not match a parameterized
-// host, subrouter, or route. If the same parameter name is captured at multiple
-// levels, the more specific match wins: route parameters override subrouter
-// parameters, and subrouter parameters override host parameters.
+// host, subrouter, mounted handler, or route. If the same parameter name is
+// captured at multiple levels, the more specific match wins: route parameters
+// override subrouter parameters, and subrouter parameters override host
+// parameters.
 func Params(req *http.Request) RequestParams {
 	params, _ := paramsFromContext(req.Context())
 	return params
@@ -785,7 +789,7 @@ func decodeParamsFromContext(ctx context.Context) (bool, bool) {
 	}
 }
 
-// Param returns the named parameter captured while matching req.
+// Param returns one named parameter captured while matching req.
 //
 // Param returns an empty string when name was not captured. Use Params(req).
 // TryGet when callers need to distinguish a missing parameter from a captured

@@ -5,10 +5,13 @@ import (
 	"strings"
 )
 
-// SubRouter registers and returns a child router mounted at pattern.
+// SubRouter registers and returns a child router for an application section
+// mounted at pattern.
 //
-// The pattern uses the github.com/ryanfowler/match route grammar. Parameters
-// captured by the mount pattern are available to child handlers.
+// Use a subrouter when several routes share a path prefix, middleware, fallback
+// handlers, or slash/method settings. The pattern uses the
+// github.com/ryanfowler/match route grammar. Parameters captured by the mount
+// pattern are available to child middleware and handlers.
 //
 // The child matches against the remaining path after the mount point. For
 // example, a child mounted at /api matches /users for a request to /api/users,
@@ -16,10 +19,10 @@ import (
 // URL is not rewritten; middleware and handlers still see the original
 // req.URL.Path.
 //
-// Middleware already registered on the parent wraps the child router.
-// Middleware added to the child applies only inside the child router.
-// The child copies the parent's current strict slash, request path value, and
-// fallback handler settings when it is created.
+// Middleware already registered on the parent wraps the child router. Middleware
+// added to the child applies only inside the child router. The child copies the
+// parent's current strict slash, implicit HEAD, request path value, and fallback
+// handler settings when it is created.
 //
 // Invalid, duplicate, or ambiguous mount patterns panic with the error returned
 // by match. Use SubRouterErr to receive the registration error instead.
@@ -31,7 +34,8 @@ func (r *Router) SubRouter(pattern string) *Router {
 	return child
 }
 
-// SubRouterErr registers and returns a child router mounted at pattern.
+// SubRouterErr registers and returns a child router mounted at pattern and
+// returns registration errors.
 //
 // The pattern uses the github.com/ryanfowler/match route grammar. Registration
 // errors include invalid parameter syntax and mount conflicts reported by
@@ -49,11 +53,12 @@ func (r *Router) SubRouterErr(pattern string) (*Router, error) {
 	return child.router, nil
 }
 
-// Mount registers h below pattern.
+// Mount registers h below pattern and lets that handler own the remaining path.
 //
-// The pattern uses the github.com/ryanfowler/match route grammar. Parameters
-// captured by the mount pattern are available to middleware and the mounted
-// handler.
+// Use Mount for file servers, another router, or any existing http.Handler that
+// should handle everything below a path. The pattern uses the
+// github.com/ryanfowler/match route grammar. Parameters captured by the mount
+// pattern are available to middleware and the mounted handler.
 //
 // The mounted handler receives the remaining path after the mount point as
 // req.URL.Path. For example, a handler mounted at /assets receives /app.css for

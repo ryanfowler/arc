@@ -4,20 +4,23 @@ import (
 	"net/http"
 )
 
-// Handle registers h for pattern, matching any request method.
+// Handle registers h for pattern and lets it handle any request method.
 //
-// The pattern uses the github.com/ryanfowler/match route grammar. For example,
-// /users/{id} captures one segment and /assets/{*path} captures the remaining
-// path. Invalid, duplicate, or ambiguous patterns panic with the error returned
-// by match. Use HandleErr to receive the registration error instead.
+// Use Handle for endpoints such as health checks or webhooks where the handler
+// should decide which methods are acceptable. The pattern uses the
+// github.com/ryanfowler/match route grammar; for example, /users/{id} captures
+// one segment and /assets/{*path} captures the remaining path.
+//
+// Invalid, duplicate, or ambiguous patterns panic with the error returned by
+// match. Use HandleErr to receive the registration error instead.
 func (r *Router) Handle(pattern string, h http.Handler) {
 	if err := r.HandleErr(pattern, h); err != nil {
 		panic(err)
 	}
 }
 
-// HandleErr registers h for pattern, matching any request method, and returns
-// registration errors.
+// HandleErr registers h for pattern, lets it handle any request method, and
+// returns registration errors.
 //
 // The pattern uses the github.com/ryanfowler/match route grammar. Registration
 // errors include invalid parameter syntax and route conflicts reported by
@@ -26,7 +29,10 @@ func (r *Router) HandleErr(pattern string, h http.Handler) error {
 	return r.handleErr("", pattern, h, true)
 }
 
-// HandleMethod registers h for method and pattern.
+// HandleMethod registers h for one HTTP method and pattern.
+//
+// Use HandleMethod when you have an http.Handler value. For http.HandlerFunc
+// handlers, the method helpers such as Get and Post are usually shorter.
 //
 // The pattern uses the github.com/ryanfowler/match route grammar. Invalid,
 // duplicate, or ambiguous patterns panic with the error returned by match. Use
@@ -37,8 +43,8 @@ func (r *Router) HandleMethod(method, pattern string, h http.Handler) {
 	}
 }
 
-// HandleMethodErr registers h for method and pattern and returns registration
-// errors.
+// HandleMethodErr registers h for one HTTP method and pattern and returns
+// registration errors.
 //
 // The pattern uses the github.com/ryanfowler/match route grammar. Registration
 // errors include invalid parameter syntax and route conflicts reported by
@@ -73,22 +79,25 @@ func (r *Router) handleErr(method, pattern string, h http.Handler, anyMethod boo
 	return nil
 }
 
-// HandleFunc registers h for pattern, matching any request method.
+// HandleFunc registers h for pattern and lets it handle any request method.
 //
 // HandleFunc is a convenience wrapper around Handle.
 func (r *Router) HandleFunc(pattern string, h http.HandlerFunc) {
 	r.Handle(pattern, h)
 }
 
-// HandleMethodFunc registers h for method and pattern.
+// HandleMethodFunc registers h for one HTTP method and pattern.
 //
 // HandleMethodFunc is a convenience wrapper around HandleMethod.
 func (r *Router) HandleMethodFunc(method, pattern string, h http.HandlerFunc) {
 	r.HandleMethod(method, pattern, h)
 }
 
-// Get registers h for GET requests matching pattern. By default, the route also
-// handles HEAD requests when no explicit HEAD or any-method route matches.
+// Get registers h for GET requests matching pattern.
+//
+// By default, the route also handles HEAD requests when no explicit HEAD or
+// any-method route matches. Use Router.SetImplicitHead(false) to require an
+// explicit HEAD route.
 func (r *Router) Get(pattern string, h http.HandlerFunc) {
 	r.HandleMethodFunc(http.MethodGet, pattern, h)
 }

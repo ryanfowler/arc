@@ -1,10 +1,13 @@
 # arc
 
-`arc` is a lightweight HTTP routing library for Go.
+`arc` is a small HTTP router for Go applications that want to stay close to
+`net/http`.
 
-It is designed to stay close to `net/http`: handlers are standard
-`http.Handler` and `http.HandlerFunc` values, middleware is ordinary handler
-wrapping, and a router can be passed directly to `http.ListenAndServe`.
+Use it when you want route parameters, method routing, middleware groups,
+subrouters, mounted handlers, and host-based routing without adopting a web
+framework. Handlers are ordinary `http.Handler` and `http.HandlerFunc` values,
+middleware is normal handler wrapping, and the router itself can be passed
+directly to `http.ListenAndServe` or `http.Server`.
 
 Path and host matching are powered by
 [`github.com/ryanfowler/match`](https://github.com/ryanfowler/match).
@@ -15,7 +18,10 @@ Path and host matching are powered by
 go get github.com/ryanfowler/arc
 ```
 
-## Quick Start
+## Start an Application
+
+Create a router during application startup, register your routes, and pass the
+router to `net/http`.
 
 ```go
 package main
@@ -36,21 +42,53 @@ func main() {
 	})
 
 	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		fmt.Fprintf(w, "user %s\n", arc.Param(req, "id"))
+		id := arc.Param(req, "id")
+		fmt.Fprintf(w, "user %s\n", id)
 	})
 
 	log.Fatal(http.ListenAndServe(":8080", r))
 }
 ```
 
-## Route Patterns
+`arc.New()` returns an `*arc.Router`, which implements `http.Handler`. Build it
+once, then serve requests with it. After registration is complete, the router is
+safe for concurrent requests.
 
-`arc` uses the `match` route grammar:
+## Register Routes
+
+Most applications use the method helpers:
+
+```go
+r.Get("/users/{id}", getUser)
+r.Post("/users", createUser)
+r.Put("/users/{id}", updateUser)
+r.Delete("/users/{id}", deleteUser)
+```
+
+The helpers accept `http.HandlerFunc`. If you already have an `http.Handler`,
+use `HandleMethod`:
+
+```go
+r.HandleMethod(http.MethodGet, "/status", statusHandler)
+```
+
+Use `Handle` or `HandleFunc` for a route that should accept any method:
+
+```go
+r.Handle("/healthz", http.HandlerFunc(health))
+```
+
+When a path exists but the method does not match, `arc` returns
+`405 Method Not Allowed` and sets the `Allow` header.
+
+## Write Route Patterns
+
+Route patterns use the `match` route grammar:
 
 - `/users/{id}` captures one non-empty path segment.
 - `/assets/{*path}` captures the non-empty remainder of the path.
-- Literal segments are preferred over parameter segments.
-- Catch-all parameters must appear at the end of a route.
+- Literal paths are preferred over parameter paths.
+- Catch-all parameters must appear at the end of the pattern.
 
 ```go
 r.Get("/users/me", currentUser)
@@ -58,18 +96,11 @@ r.Get("/users/{id}", getUser)
 r.Get("/assets/{*path}", serveAsset)
 ```
 
-Use `Handle` or `HandleFunc` when a route should match any request method:
+In this example, `/users/me` uses `currentUser`, while `/users/42` uses
+`getUser`.
 
-```go
-r.Handle("/healthz", http.HandlerFunc(health))
-```
-
-Use `HandleMethod`, `HandleMethodFunc`, or the method helpers like `Get` and
-`Post` when a route should match a specific method.
-
-Route matching is strict about trailing slashes by default, so `/users/42/`
-does not match `/users/{id}`. Disable strict slash matching when you want a
-single trailing slash to be accepted by routes registered without one:
+Trailing slashes are significant by default. A request for `/users/42/` does
+not match `/users/{id}` unless you relax slash matching:
 
 ```go
 r := arc.New()
@@ -77,40 +108,22 @@ r.SetStrictSlash(false)
 r.Get("/users/{id}", getUser) // matches /users/42 and /users/42/
 ```
 
-Exact route matches still take precedence when strict slash matching is
-disabled. If both `/users/{id}` and `/users/{id}/` are registered, a request for
-`/users/42/` uses the explicit trailing-slash route.
+Exact matches still win. If both `/users/{id}` and `/users/{id}/` are
+registered, `/users/42/` uses the explicit trailing-slash route.
 
-GET routes handle HEAD requests by default when no explicit HEAD or any-method
-route matches. Disable that when you need strict method matching:
+`GET` routes handle `HEAD` requests by default when there is no explicit `HEAD`
+or any-method route for that path. Disable that if your application needs exact
+method matching:
 
 ```go
 r := arc.New()
 r.SetImplicitHead(false)
-r.Get("/users/{id}", getUser) // HEAD /users/42 returns 405 unless Head is registered
+r.Get("/users/{id}", getUser) // HEAD /users/42 returns 405
 ```
 
-### Path Matching Details
+## Read Request Parameters
 
-`arc` normally matches request paths using `req.URL.Path` as parsed by
-`net/http`. When `req.URL.RawPath` preserves an escaped slash (`%2F` or `%2f`),
-`arc` matches `req.URL.EscapedPath()` so the escaped slash stays inside its path
-segment, then unescapes captured params before exposing them. It does not use
-`RequestURI`.
-
-Two important edge cases:
-
-- Escaped slashes are treated as data inside a segment, not path separators. A
-  request for `/files/a%2Fb` matches `/files/{id}` and captures `a/b`, but it
-  does not match the static path `/files/a/b`.
-- `arc` does not clean request paths or issue `ServeMux`-style redirects for
-  `.` segments, `..` segments, or repeated slashes. Those separators are
-  matched as they appear in the request path, apart from the optional single
-  trailing slash relaxation controlled by `SetStrictSlash(false)`.
-
-## Request Parameters
-
-Use `arc.Param` for a single parameter:
+Use `arc.Param` when you need one parameter:
 
 ```go
 r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
@@ -119,39 +132,40 @@ r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
 })
 ```
 
-Use `arc.Params` when you want access to the underlying parameter value:
+Use `arc.Params` when you need the full parameter set:
 
 ```go
 params := arc.Params(req)
 id, ok := params.TryGet("id")
 ```
 
-`arc.Params(req)` returns `arc.RequestParams`, which is an alias of
-`match.Params`. That means methods like `Len`, `At`, `Get`, `TryGet`, `Seq`,
-`AppendTo`, and `All` are available directly.
+`arc.Params(req)` returns `arc.RequestParams`, an alias of `match.Params`, so
+the `match.Params` methods are available directly: `Len`, `At`, `Get`,
+`TryGet`, `Seq`, `AppendTo`, and `All`.
 
-Captured parameters are not mirrored to the standard library request path
-values by default. Enable that compatibility path when middleware or handlers
-need `req.PathValue`:
+By default, parameters are available through `arc.Param` and `arc.Params` only.
+If your handlers or middleware expect standard library path values, enable that
+compatibility option during startup. Do it before creating subrouters or host
+routers that should inherit the setting:
 
 ```go
 r := arc.New()
 r.SetRequestPathValues(true)
 ```
 
-With request path values enabled, `req.PathValue("id")` works with net/http
-middleware that expects it.
+Then `req.PathValue("id")` returns the same value as `arc.Param(req, "id")`.
 
-If a parameter name is captured at multiple levels, the more specific match
+When the same name is captured at multiple levels, the most specific match
 wins:
 
 ```text
 host params < subrouter params < route params
 ```
 
-## Middleware
+## Add Middleware
 
-Middleware is a function that wraps an `http.Handler`.
+Middleware in `arc` is the same shape used throughout `net/http`: a function
+that receives one handler and returns another.
 
 ```go
 func logging(next http.Handler) http.Handler {
@@ -170,32 +184,22 @@ r.Use(logging)
 r.Get("/healthz", health)
 ```
 
-Middleware applies to routes, subrouters, and host routers registered after the
-call to `Use`. Middleware runs in registration order.
+Middleware applies to routes, subrouters, host routers, and mounted handlers
+registered after the `Use` call. Middleware runs in the order it is registered.
 
-## Configuration Order
-
-Use router setters for routing behavior that should apply consistently:
+This makes it easy to build application sections with different middleware:
 
 ```go
-r := arc.New()
-r.SetStrictSlash(false)
-r.SetImplicitHead(false)
-r.SetRequestPathValues(true)
+r.Get("/healthz", health) // no auth middleware
+
+r.Use(requireAuth)
+r.Get("/account", account) // uses requireAuth
 ```
 
-Subrouters and host routers snapshot parent settings when they are created.
-Calls to `SetStrictSlash`, `SetImplicitHead`, `SetRequestPathValues`,
-`SetNotFound`, or `SetMethodNotAllowed` after creating a child do not affect
-that existing child. Call those setters before `SubRouter` or `Host` when you
-want a child to start with the same behavior.
+## Group Application Routes
 
-Middleware follows the same registration-order model: `Use` only wraps routes,
-subrouters, and host routers registered after the call.
-
-## Subrouters
-
-`SubRouter` returns another `*arc.Router` mounted below a pattern.
+Use `SubRouter` when a section of your application shares a path prefix,
+middleware, or configuration.
 
 ```go
 r := arc.New()
@@ -210,30 +214,33 @@ api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
 })
 ```
 
-A subrouter matches using the remaining path after the mount point. For example,
-`/api/users` is dispatched inside the child router as `/users`. Both `/api` and
-`/api/` are dispatched to the child router's `/` route. The request URL is not
-rewritten; middleware and handlers still see the original `req.URL.Path`.
+A subrouter matches the remaining path after the mount point. A child mounted
+at `/api` receives `/users` for a request to `/api/users`. Both `/api` and
+`/api/` are dispatched to the child router's `/` route.
 
-## Mounted Handlers
+The original request URL is not rewritten for subrouters. Middleware and
+handlers still see the original `req.URL.Path`.
 
-`Mount` attaches any `http.Handler` below a pattern.
+## Mount Existing Handlers
+
+Use `Mount` when another `http.Handler` should own everything below a path.
+This is useful for file servers and other routers.
 
 ```go
 r := arc.New()
-
-r.Mount("/tenants/{tenant}/assets", http.FileServerFS(assets))
+r.Mount("/assets", http.FileServerFS(assets))
 ```
 
-Mounted handlers receive the remaining path after the mount point as
-`req.URL.Path`. For example, a handler mounted at `/assets` receives `/app.css`
-for a request to `/assets/app.css`, while both `/assets` and `/assets/` are
-dispatched as `/`. Mount parameters are available with `arc.Param`, and with
-`req.PathValue` when request path values are enabled.
+Mounted handlers receive the remaining path as `req.URL.Path`. For example, a
+handler mounted at `/assets` receives `/app.css` for `/assets/app.css`, while
+both `/assets` and `/assets/` are dispatched as `/`.
 
-## Host Routing
+Mount parameters are available with `arc.Param`, and with `req.PathValue` when
+request path values are enabled.
 
-`Host` returns a child router that only handles matching request hosts.
+## Route by Host
+
+Use `Host` when different domains or subdomains should have different routes.
 
 ```go
 r := arc.New()
@@ -251,17 +258,20 @@ Host matching is case-insensitive. If `Request.Host` includes a port, the port
 is ignored before matching. Brackets around IPv6 literals are also ignored, so
 `[::1]` and `[::1]:8080` match the host pattern `::1`.
 
-If no host pattern matches, dispatch falls through to the parent router's
+If no host pattern matches, `arc` continues dispatching on the parent router's
 subrouters and routes.
 
-## Fallback Handlers
+## Customize Fallbacks
 
-By default, unmatched requests use `http.NotFoundHandler`, and paths registered
-for a different method receive status `405 Method Not Allowed` with an `Allow`
-header listing the effective methods. When implicit HEAD matching is enabled,
-`Allow` includes `HEAD` for paths with a `GET` route.
+By default:
 
-You can customize both:
+- unmatched requests use `http.NotFoundHandler`;
+- paths registered for a different method receive `405 Method Not Allowed`;
+- the `Allow` header lists the effective methods for that path;
+- when implicit `HEAD` matching is enabled, `Allow` includes `HEAD` for paths
+  with a `GET` route.
+
+Customize the fallback handlers during startup:
 
 ```go
 r := arc.New()
@@ -269,20 +279,21 @@ r.SetNotFound(http.HandlerFunc(notFound))
 r.SetMethodNotAllowed(http.HandlerFunc(methodNotAllowed))
 ```
 
-Subrouters inherit the parent router's fallback handlers when they are created,
-and can also configure their own handlers.
+Fallback handlers also receive matched parameters when the host, subrouter, or
+route pattern captured any.
 
-## Registration Errors
+## Handle Registration Errors
 
-Route, mount, subrouter, and host registration helpers panic if a pattern is
-invalid, duplicated, or ambiguous:
+The common registration methods panic when a pattern is invalid, duplicated, or
+ambiguous. That is convenient for applications that register fixed routes at
+startup:
 
 ```go
 r.Get("/users/{id}", getUser)
 ```
 
-Use `HandleErr`, `HandleMethodErr`, `MountErr`, `SubRouterErr`, or `HostErr`
-when you want to handle registration errors explicitly:
+Use the `Err` variants when routes come from configuration, plugins, or another
+runtime source:
 
 ```go
 if err := r.HandleMethodErr(http.MethodGet, "/users/{id}", http.HandlerFunc(getUser)); err != nil {
@@ -307,10 +318,47 @@ if err != nil {
 Errors come from `github.com/ryanfowler/match`, including invalid parameter
 syntax and `*match.ConflictError`.
 
+## Configure Before Creating Children
+
+Subrouters and host routers copy the parent router's current settings when they
+are created. Configure shared behavior first:
+
+```go
+r := arc.New()
+r.SetStrictSlash(false)
+r.SetImplicitHead(false)
+r.SetRequestPathValues(true)
+r.SetNotFound(http.HandlerFunc(notFound))
+r.SetMethodNotAllowed(http.HandlerFunc(methodNotAllowed))
+
+api := r.SubRouter("/api")
+api.Get("/users/{id}", getUser)
+```
+
+Later changes on the parent do not affect existing children. Middleware follows
+the same registration-order model: `Use` only wraps routes, subrouters, host
+routers, and mounted handlers registered after the call.
+
+## Path Matching Details
+
+`arc` normally matches `req.URL.Path`, as parsed by `net/http`.
+
+When `req.URL.RawPath` preserves an escaped slash (`%2F` or `%2f`), `arc`
+matches `req.URL.EscapedPath()` so the escaped slash stays inside its path
+segment. Captured parameters are unescaped before your handlers read them.
+
+For example, `/files/a%2Fb` matches `/files/{id}` and captures `a/b`, but it
+does not match the static route `/files/a/b`.
+
+`arc` does not clean request paths or issue `ServeMux`-style redirects for `.`
+segments, `..` segments, or repeated slashes. Those separators are matched as
+they appear in the request path, apart from the optional single trailing slash
+relaxation controlled by `SetStrictSlash(false)`.
+
 ## Concurrency
 
-Build the router before serving requests.
+Register routes and configure the router before serving requests.
 
 A router is safe for concurrent serving after registration is complete.
 Registration and configuration methods are not safe to call concurrently with
-`ServeHTTP` or with other registration and configuration methods.
+`ServeHTTP` or with each other.
