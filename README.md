@@ -187,7 +187,8 @@ r.Get("/healthz", health)
 ```
 
 Middleware applies to routes, subrouters, host routers, and mounted handlers
-registered after the `Use` call. Middleware runs in the order it is registered.
+registered after the `Use` call. Fallback handlers use the router's current
+middleware stack. Middleware runs in the order it is registered.
 
 This makes it easy to build application sections with different middleware:
 
@@ -282,7 +283,9 @@ r.SetMethodNotAllowed(http.HandlerFunc(methodNotAllowed))
 ```
 
 Fallback handlers also receive matched parameters when the host, subrouter, or
-route pattern captured any.
+route pattern captured any. They run through middleware for the router that
+owns the fallback; a subrouter or host router fallback runs through parent
+middleware that wrapped the child plus the child router's own middleware.
 
 ## Handle Registration Errors
 
@@ -338,8 +341,9 @@ api.Get("/users/{id}", getUser)
 ```
 
 Later changes on the parent do not affect existing children. Middleware follows
-the same registration-order model: `Use` only wraps routes, subrouters, host
-routers, and mounted handlers registered after the call.
+the same registration-order model for routes, subrouters, host routers, and
+mounted handlers. Fallback handlers use the current middleware stack on the
+router that owns the fallback.
 
 ## Path Matching Details
 
