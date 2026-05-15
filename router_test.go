@@ -54,15 +54,27 @@ func TestRouterMatchesCatchAll(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
-func TestRouterUsesURLPathForEscapedSlash(t *testing.T) {
-	t.Run("single segment route does not match", func(t *testing.T) {
+func TestRouterMatchesEscapedSlashWithinSegment(t *testing.T) {
+	t.Run("single segment route matches", func(t *testing.T) {
 		r := New()
-		r.Get("/files/{name}", writeStatus(http.StatusAccepted))
+		r.SetRequestPathValues(true)
+		r.Get("/files/{name}", func(w http.ResponseWriter, req *http.Request) {
+			if got := req.URL.Path; got != "/files/a/b" {
+				t.Fatalf("req.URL.Path = %q, want %q", got, "/files/a/b")
+			}
+			if got := Param(req, "name"); got != "a/b" {
+				t.Fatalf("Param(name) = %q, want %q", got, "a/b")
+			}
+			if got := req.PathValue("name"); got != "a/b" {
+				t.Fatalf("req.PathValue(name) = %q, want %q", got, "a/b")
+			}
+			w.WriteHeader(http.StatusAccepted)
+		})
 
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/files/a%2Fb", nil))
 
-		assertStatus(t, rec, http.StatusNotFound)
+		assertStatus(t, rec, http.StatusAccepted)
 	})
 
 	t.Run("catch all sees decoded slash", func(t *testing.T) {
@@ -82,6 +94,67 @@ func TestRouterUsesURLPathForEscapedSlash(t *testing.T) {
 
 		assertStatus(t, rec, http.StatusAccepted)
 	})
+}
+
+func TestRouterMatchesStaticEscapedSlashWithinSegment(t *testing.T) {
+	r := New()
+	r.Get("/files/a%2Fb", writeStatus(http.StatusAccepted))
+
+	t.Run("escaped slash", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/files/a%2Fb", nil))
+
+		assertStatus(t, rec, http.StatusAccepted)
+	})
+
+	t.Run("path separator", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/files/a/b", nil))
+
+		assertStatus(t, rec, http.StatusNotFound)
+	})
+}
+
+func TestRouterDecodesEscapedParamValue(t *testing.T) {
+	r := New()
+	r.Get("/search/{query}", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "query"); got != "what's up" {
+			t.Fatalf("Param(query) = %q, want %q", got, "what's up")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search/what%27s%20up", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestRouterUsesDecodedPathWhenRawPathHasNoEscapedSlash(t *testing.T) {
+	r := New()
+	r.Get("/search/{query}", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "query"); got != "what's up" {
+			t.Fatalf("Param(query) = %q, want %q", got, "what's up")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/search/what%27s%20up", nil)
+	req.URL.RawPath = "/search/what%27s%20up"
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestRouterEscapesLiteralBracesInPattern(t *testing.T) {
+	r := New()
+	r.Get("/files/{{name}}", writeStatus(http.StatusAccepted))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/files/%7Bname%7D", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
 }
 
 func TestRouterDoesNotCleanRequestPath(t *testing.T) {
@@ -979,6 +1052,41 @@ func TestNestedSubRoutersMergeParams(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestSubRouterMatchesEscapedSlashWithinSegment(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api/{version}")
+	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "version"); got != "v1/beta" {
+			t.Fatalf("Param(version) = %q, want %q", got, "v1/beta")
+		}
+		if got := Param(req, "id"); got != "42" {
+			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1%2Fbeta/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestSubRouterChildRouteEnablesEscapedSlashMatching(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api")
+	api.Get("/files/{name}", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "name"); got != "a/b" {
+			t.Fatalf("Param(name) = %q, want %q", got, "a/b")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/files/a%2Fb", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestSubRouterCatchAllMount(t *testing.T) {
 	r := New()
 	files := r.SubRouter("/files/{*path}")
@@ -1159,6 +1267,24 @@ func TestMountDispatchesHandlerWithRemainingPathAndParams(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestMountMatchesEscapedSlashWithinSegment(t *testing.T) {
+	r := New()
+	r.Mount("/assets/{name}", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "name"); got != "a/b" {
+			t.Fatalf("Param(name) = %q, want %q", got, "a/b")
+		}
+		if got := req.URL.Path; got != "/app.css" {
+			t.Fatalf("req.URL.Path = %q, want %q", got, "/app.css")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/a%2Fb/app.css", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestMountPatternIncludesSubRouterPatterns(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api/{version}")
@@ -1305,6 +1431,24 @@ func TestHostRouterMatchesAndMergesParams(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusAccepted)
 	}
+}
+
+func TestHostRouterChildRouteEnablesEscapedSlashMatching(t *testing.T) {
+	r := New()
+	api := r.Host("api.example.com")
+	api.Get("/files/{name}", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "name"); got != "a/b" {
+			t.Fatalf("Param(name) = %q, want %q", got, "a/b")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/files/a%2Fb", nil)
+	req.Host = "api.example.com"
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assertStatus(t, rec, http.StatusAccepted)
 }
 
 func TestHostRouterPrefersStaticHost(t *testing.T) {

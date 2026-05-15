@@ -92,18 +92,21 @@ r.Get("/users/{id}", getUser) // HEAD /users/42 returns 405 unless Head is regis
 
 ### Path Matching Details
 
-`arc` matches against `req.URL.Path` as parsed by `net/http`. It does not match
-against `req.URL.RawPath`, `req.URL.EscapedPath()`, or `RequestURI`.
+`arc` normally matches request paths using `req.URL.Path` as parsed by
+`net/http`. When `req.URL.RawPath` preserves an escaped slash (`%2F` or `%2f`),
+`arc` matches `req.URL.EscapedPath()` so the escaped slash stays inside its path
+segment, then unescapes captured params before exposing them. It does not use
+`RequestURI`.
 
-This differs from `net/http.ServeMux` in two important edge cases:
+Two important edge cases:
 
-- Escaped slashes are already decoded in `req.URL.Path`, so `/files/a%2Fb` is
-  dispatched as `/files/a/b`. A route like `/files/{id}` does not match that
-  request, while `/files/{*path}` can capture `a/b`.
+- Escaped slashes are treated as data inside a segment, not path separators. A
+  request for `/files/a%2Fb` matches `/files/{id}` and captures `a/b`, but it
+  does not match the static path `/files/a/b`.
 - `arc` does not clean request paths or issue `ServeMux`-style redirects for
-  `.` segments, `..` segments, or repeated slashes. Those paths are matched as
-  they appear in `req.URL.Path`, apart from the optional single trailing slash
-  relaxation controlled by `SetStrictSlash(false)`.
+  `.` segments, `..` segments, or repeated slashes. Those separators are
+  matched as they appear in the request path, apart from the optional single
+  trailing slash relaxation controlled by `SetStrictSlash(false)`.
 
 ## Request Parameters
 

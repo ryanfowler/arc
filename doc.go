@@ -11,9 +11,11 @@
 // read with Params or Param. Use Router.SetRequestPathValues to also mirror
 // them to http.Request.PathValue.
 //
-// Arc matches paths using req.URL.Path as parsed by net/http. It does not use
-// URL.RawPath or URL.EscapedPath, and it does not perform net/http.ServeMux
-// path cleaning redirects for dot segments or repeated slashes. GET routes
-// handle HEAD requests by default when no explicit HEAD or any-method route
-// matches; use Router.SetImplicitHead to disable that behavior.
+// Arc normally matches paths using req.URL.Path as parsed by net/http. When
+// req.URL.RawPath preserves an escaped slash, Arc matches req.URL.EscapedPath()
+// so the escaped slash stays inside its segment and decodes captured params
+// before exposing them. It does not perform net/http.ServeMux path cleaning
+// redirects for dot segments or repeated slashes. GET routes handle HEAD
+// requests by default when no explicit HEAD or any-method route matches; use
+// Router.SetImplicitHead to disable that behavior.
 package arc

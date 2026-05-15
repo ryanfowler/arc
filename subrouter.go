@@ -43,6 +43,9 @@ func (r *Router) SubRouterErr(pattern string) (*Router, error) {
 	if err := r.subMounts.TryInsert(pattern, child); err != nil {
 		return nil, err
 	}
+	if routePatternNeedsEscapedSlashMatch(pattern) {
+		r.enableEscapedPathMatch()
+	}
 
 	child.router.patternPrefix = joinPatterns(r.patternPrefix, pattern)
 	r.hasSubRouters = true
@@ -89,6 +92,9 @@ func (r *Router) MountErr(pattern string, h http.Handler) error {
 	if err := r.subMounts.TryInsert(pattern, child); err != nil {
 		return err
 	}
+	if routePatternNeedsEscapedSlashMatch(pattern) {
+		r.enableEscapedPathMatch()
+	}
 
 	r.hasSubRouters = true
 	return nil
@@ -99,7 +105,10 @@ type mountedHandler struct {
 }
 
 func (h mountedHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	path, _ := dispatchState(req)
+	path, _, decodeParams := dispatchState(req)
+	if decodeParams {
+		path = decodedMatchPath(path)
+	}
 	h.handler.ServeHTTP(w, requestWithURLPath(req, path))
 }
 
