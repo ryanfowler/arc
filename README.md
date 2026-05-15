@@ -1,6 +1,8 @@
 # arc
 
-`arc` is a small HTTP router for Go applications that want to stay close to
+[![Go Reference](https://pkg.go.dev/badge/github.com/ryanfowler/arc.svg)](https://pkg.go.dev/github.com/ryanfowler/arc)
+
+`arc` is a minimal, high-performance HTTP router for Go applications that want to stay close to
 `net/http`.
 
 Use it when you want route parameters, method routing, middleware groups,
