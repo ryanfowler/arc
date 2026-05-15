@@ -640,6 +640,17 @@ func TestSubRouterRootPaths(t *testing.T) {
 	}
 }
 
+func TestSubRouterDoesNotMatchPartialSegment(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api")
+	api.Get("/", writeStatus(http.StatusCreated))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/apix", nil))
+
+	assertStatus(t, rec, http.StatusNotFound)
+}
+
 func TestSubRouterInheritsStrictSlashSetting(t *testing.T) {
 	r := New()
 	r.SetStrictSlash(false)
@@ -1135,6 +1146,16 @@ func TestMountRootPaths(t *testing.T) {
 			assertStatus(t, rec, http.StatusCreated)
 		})
 	}
+}
+
+func TestMountDoesNotMatchPartialSegment(t *testing.T) {
+	r := New()
+	r.Mount("/assets", writeStatus(http.StatusCreated))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assetsx/app.css", nil))
+
+	assertStatus(t, rec, http.StatusNotFound)
 }
 
 func TestMountRunsParentMiddlewareBeforeRewritingPath(t *testing.T) {

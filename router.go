@@ -36,7 +36,7 @@ type Router struct {
 	routes             map[string]*match.Router[*route]
 	methodRoutes       match.Router[*routeMethods]
 	routeMethods       map[string]*routeMethods
-	subMounts          mountMatcher
+	subMounts          match.Router[*childRouter]
 	hostRoutes         match.Router[*childRouter]
 	hasHosts           bool
 	hasSubRouters      bool
@@ -238,12 +238,12 @@ func (r *Router) serveSubRouter(w http.ResponseWriter, req *http.Request, path s
 		return false
 	}
 
-	child, nextPath, subParams, ok := r.subMounts.Match(path)
+	mount, ok := r.subMounts.MatchPrefix(path)
 	if !ok {
 		return false
 	}
 
-	child.serve(w, req, nextPath, mergeParams(params, subParams))
+	mount.Value.serve(w, req, mount.Rest, mergeParams(params, mount.Params))
 	return true
 }
 

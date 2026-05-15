@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+
+	"github.com/ryanfowler/match"
 )
 
 var (
@@ -209,7 +211,7 @@ func BenchmarkMountMatcherMatch(b *testing.B) {
 
 	for _, bm := range benchmarks {
 		b.Run(bm.name, func(b *testing.B) {
-			var m mountMatcher
+			var m match.Router[*childRouter]
 			for i := 0; i < 100; i++ {
 				pattern := "/{tenant" + strconv.Itoa(i) + "}/route" + strconv.Itoa(i)
 				if err := m.TryInsert(pattern, &childRouter{}); err != nil {
@@ -223,10 +225,10 @@ func BenchmarkMountMatcherMatch(b *testing.B) {
 			var matched bool
 			var param string
 			for i := 0; i < b.N; i++ {
-				_, _, params, ok := m.Match(bm.path)
+				got, ok := m.MatchPrefix(bm.path)
 				matched = ok
 				if ok {
-					param = params.Get(bm.param)
+					param = got.Params.Get(bm.param)
 				}
 			}
 
