@@ -49,8 +49,6 @@ type Router struct {
 	implicitHead      bool
 	requestPathValues bool
 	patternPrefix     string
-	escapedPathMatch  bool
-	parent            *Router
 }
 
 type route struct {
@@ -198,7 +196,7 @@ func (r *Router) Use(mw ...Middleware) {
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	path := req.URL.Path
 	decodeParams := false
-	if r.escapedPathMatch && hasEscapedSlash(req.URL.RawPath) {
+	if hasEscapedSlash(req.URL.RawPath) {
 		path, decodeParams = escapedSlashMatchPath(req)
 	}
 	r.serve(w, req, path, match.Params{}, decodeParams)
@@ -428,19 +426,11 @@ func newChildRouter(parent *Router) *childRouter {
 	r.SetImplicitHead(parent.implicitHead)
 	r.SetRequestPathValues(parent.requestPathValues)
 	r.patternPrefix = parent.patternPrefix
-	r.parent = parent
 	child := &childRouter{router: r}
 	if len(parent.middleware) > 0 {
 		child.handler = compose(routerHandler{router: r}, parent.middleware)
 	}
 	return child
-}
-
-func (r *Router) enableEscapedPathMatch() {
-	for r != nil {
-		r.escapedPathMatch = true
-		r = r.parent
-	}
 }
 
 func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path string, params match.Params, decodeParams bool) {
@@ -691,10 +681,6 @@ func hasEscapedSlash(path string) bool {
 		}
 	}
 	return false
-}
-
-func routePatternNeedsEscapedSlashMatch(pattern string) bool {
-	return strings.Contains(pattern, "{") || hasEscapedSlash(pattern)
 }
 
 func restoreParams(params match.Params) match.Params {

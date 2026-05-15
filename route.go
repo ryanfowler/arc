@@ -69,9 +69,6 @@ func (r *Router) handleErr(method, pattern string, h http.Handler, anyMethod boo
 	if err := r.insertRoute(registration); err != nil {
 		return err
 	}
-	if routePatternNeedsEscapedSlashMatch(pattern) {
-		r.enableEscapedPathMatch()
-	}
 
 	return nil
 }

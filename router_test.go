@@ -115,6 +115,16 @@ func TestRouterMatchesStaticEscapedSlashWithinSegment(t *testing.T) {
 	})
 }
 
+func TestRouterDoesNotMatchStaticRouteWithEscapedSlash(t *testing.T) {
+	r := New()
+	r.Get("/files/a/b", writeStatus(http.StatusAccepted))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/files/a%2Fb", nil))
+
+	assertStatus(t, rec, http.StatusNotFound)
+}
+
 func TestRouterDecodesEscapedParamValue(t *testing.T) {
 	r := New()
 	r.Get("/search/{query}", func(w http.ResponseWriter, req *http.Request) {
