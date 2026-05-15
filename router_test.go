@@ -697,6 +697,34 @@ func TestMiddlewareAppliesOnlyToLaterRegistrations(t *testing.T) {
 	assertStrings(t, calls, want)
 }
 
+func TestFallbacksRunMiddleware(t *testing.T) {
+	var calls []string
+	r := New()
+	r.SetNotFound(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		calls = append(calls, "not found")
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	r.SetMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		calls = append(calls, "method not allowed")
+		w.WriteHeader(http.StatusConflict)
+	}))
+	r.Use(namedMiddleware("mw", &calls))
+	r.Get("/known", writeStatus(http.StatusNoContent))
+
+	notFound := httptest.NewRecorder()
+	r.ServeHTTP(notFound, httptest.NewRequest(http.MethodGet, "/missing", nil))
+
+	assertStatus(t, notFound, http.StatusTeapot)
+	assertStrings(t, calls, []string{"mw before", "not found", "mw after"})
+
+	calls = nil
+	methodNotAllowed := httptest.NewRecorder()
+	r.ServeHTTP(methodNotAllowed, httptest.NewRequest(http.MethodPost, "/known", nil))
+
+	assertStatus(t, methodNotAllowed, http.StatusConflict)
+	assertStrings(t, calls, []string{"mw before", "method not allowed", "mw after"})
+}
+
 func TestSubRouterMatchesAndMergesParams(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api/{version}")
@@ -995,6 +1023,49 @@ func TestSubRouterRunsParentAndChildMiddleware(t *testing.T) {
 			t.Fatalf("calls = %#v, want %#v", calls, want)
 		}
 	}
+}
+
+func TestSubRouterFallbacksRunParentAndChildMiddleware(t *testing.T) {
+	var calls []string
+	r := New()
+	r.Use(namedMiddleware("parent", &calls))
+
+	api := r.SubRouter("/api")
+	api.SetNotFound(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		calls = append(calls, "not found")
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	api.SetMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		calls = append(calls, "method not allowed")
+		w.WriteHeader(http.StatusConflict)
+	}))
+	api.Use(namedMiddleware("child", &calls))
+	api.Get("/known", writeStatus(http.StatusNoContent))
+
+	notFound := httptest.NewRecorder()
+	r.ServeHTTP(notFound, httptest.NewRequest(http.MethodGet, "/api/missing", nil))
+
+	assertStatus(t, notFound, http.StatusTeapot)
+	assertStrings(t, calls, []string{
+		"parent before",
+		"child before",
+		"not found",
+		"child after",
+		"parent after",
+	})
+
+	calls = nil
+	methodNotAllowed := httptest.NewRecorder()
+	r.ServeHTTP(methodNotAllowed, httptest.NewRequest(http.MethodPost, "/api/known", nil))
+
+	assertStatus(t, methodNotAllowed, http.StatusConflict)
+	assertStrings(t, calls, []string{
+		"parent before",
+		"child before",
+		"method not allowed",
+		"child after",
+		"parent after",
+	})
 }
 
 func TestSubRouterSnapshotsParentMiddlewareAtRegistration(t *testing.T) {
@@ -1609,6 +1680,49 @@ func TestHostRouterRunsParentAndChildMiddleware(t *testing.T) {
 			t.Fatalf("calls = %#v, want %#v", calls, want)
 		}
 	}
+}
+
+func TestHostRouterFallbacksRunParentAndChildMiddleware(t *testing.T) {
+	var calls []string
+	r := New()
+	r.Use(namedMiddleware("parent", &calls))
+
+	api := r.Host("api.example.com")
+	api.SetNotFound(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		calls = append(calls, "not found")
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	api.SetMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		calls = append(calls, "method not allowed")
+		w.WriteHeader(http.StatusConflict)
+	}))
+	api.Use(namedMiddleware("child", &calls))
+	api.Get("/known", writeStatus(http.StatusNoContent))
+
+	notFound := httptest.NewRecorder()
+	r.ServeHTTP(notFound, httptest.NewRequest(http.MethodGet, "http://api.example.com/missing", nil))
+
+	assertStatus(t, notFound, http.StatusTeapot)
+	assertStrings(t, calls, []string{
+		"parent before",
+		"child before",
+		"not found",
+		"child after",
+		"parent after",
+	})
+
+	calls = nil
+	methodNotAllowed := httptest.NewRecorder()
+	r.ServeHTTP(methodNotAllowed, httptest.NewRequest(http.MethodPost, "http://api.example.com/known", nil))
+
+	assertStatus(t, methodNotAllowed, http.StatusConflict)
+	assertStrings(t, calls, []string{
+		"parent before",
+		"child before",
+		"method not allowed",
+		"child after",
+		"parent after",
+	})
 }
 
 func TestHostRouterSnapshotsParentMiddlewareAtRegistration(t *testing.T) {

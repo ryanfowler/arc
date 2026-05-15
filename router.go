@@ -11,11 +11,11 @@ import (
 	"github.com/ryanfowler/match"
 )
 
-// Middleware wraps an HTTP handler for routes registered on a Router.
+// Middleware wraps an HTTP handler on a Router.
 //
 // Middleware uses the same shape as standard net/http middleware. If a router
 // uses middleware a, b, and c, requests flow through a, then b, then c, then the
-// matched handler.
+// matched handler or fallback handler.
 type Middleware func(http.Handler) http.Handler
 
 // RequestParams is the parameter set captured while matching a request.
@@ -44,8 +44,10 @@ type Router struct {
 
 	middleware []Middleware
 
-	notFound         http.Handler
-	methodNotAllowed http.Handler
+	notFound                http.Handler
+	methodNotAllowed        http.Handler
+	notFoundHandler         http.Handler
+	methodNotAllowedHandler http.Handler
 
 	strictSlash       bool
 	implicitHead      bool
@@ -102,33 +104,41 @@ func (h routerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 // Child routers and host routers copy the parent router's current settings when
 // they are created.
 func New() *Router {
-	return &Router{
+	r := &Router{
 		routeMethods:     make(map[string]*routeMethods),
 		notFound:         http.NotFoundHandler(),
 		methodNotAllowed: http.HandlerFunc(defaultMethodNotAllowed),
 		strictSlash:      true,
 		implicitHead:     true,
 	}
+	r.compileFallbacks()
+	return r
 }
 
 // SetNotFound sets the application handler used when no host, subrouter,
 // mounted handler, or route matches a request.
 //
+// The handler runs through the router's current middleware stack.
+//
 // Passing nil leaves the router's existing not-found handler unchanged.
 func (r *Router) SetNotFound(h http.Handler) {
 	if h != nil {
 		r.notFound = h
+		r.compileFallbacks()
 	}
 }
 
 // SetMethodNotAllowed sets the handler used when a request path matches a route
 // pattern, but the request method was not registered for that pattern.
 //
+// The handler runs through the router's current middleware stack.
+//
 // Passing nil leaves the router's existing method-not-allowed handler
 // unchanged.
 func (r *Router) SetMethodNotAllowed(h http.Handler) {
 	if h != nil {
 		r.methodNotAllowed = h
+		r.compileFallbacks()
 	}
 }
 
@@ -171,12 +181,13 @@ func defaultMethodNotAllowed(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusMethodNotAllowed)
 }
 
-// Use appends middleware to routes registered later on the router.
+// Use appends middleware to the router.
 //
 // Middleware applies only to routes, subrouters, host routers, and mounted
-// handlers registered after the call to Use. This lets applications build
-// separate sections of a router with different middleware stacks. Middleware is
-// executed in the order it is added. Use panics if any middleware is nil.
+// handlers registered after the call to Use. Fallback handlers use the router's
+// current middleware stack. This lets applications build separate sections of a
+// router with different middleware stacks. Middleware is executed in the order
+// it is added. Use panics if any middleware is nil.
 func (r *Router) Use(mw ...Middleware) {
 	for _, m := range mw {
 		if m == nil {
@@ -184,6 +195,7 @@ func (r *Router) Use(mw ...Middleware) {
 		}
 		r.middleware = append(r.middleware, m)
 	}
+	r.compileFallbacks()
 }
 
 // ServeHTTP dispatches req to the best matching host router, subrouter, mounted
@@ -216,7 +228,7 @@ func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, pa
 		return
 	}
 
-	r.notFound.ServeHTTP(w, requestForHandler(req, params, "", r.requestPathValues))
+	r.notFoundHandler.ServeHTTP(w, requestForHandler(req, params, "", r.requestPathValues))
 }
 
 func (r *Router) serveHost(w http.ResponseWriter, req *http.Request, path string, params match.Params, decodeParams bool) bool {
@@ -264,7 +276,7 @@ func (r *Router) serveRoute(w http.ResponseWriter, req *http.Request, path strin
 	route := methods.routeFor(req.Method, r.implicitHead)
 	if route == nil {
 		w.Header().Set("Allow", methods.allowHeader(r.implicitHead))
-		r.methodNotAllowed.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams), methods.pattern, r.requestPathValues))
+		r.methodNotAllowedHandler.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams), methods.pattern, r.requestPathValues))
 		return true
 	}
 
@@ -419,6 +431,11 @@ func compose(h http.Handler, middleware []Middleware) http.Handler {
 		h = middleware[i](h)
 	}
 	return h
+}
+
+func (r *Router) compileFallbacks() {
+	r.notFoundHandler = compose(r.notFound, r.middleware)
+	r.methodNotAllowedHandler = compose(r.methodNotAllowed, r.middleware)
 }
 
 func newChildRouter(parent *Router) *childRouter {
