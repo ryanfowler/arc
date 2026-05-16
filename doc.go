@@ -32,6 +32,11 @@
 // prefix, Mount to attach an existing http.Handler below a path, and Host to
 // dispatch different domains or subdomains to different routers.
 //
+// Dispatch checks host routers first, then subrouters and mounted handlers, and
+// then routes registered directly on the router. When a subrouter or mounted
+// handler matches a prefix, it owns the request, including fallback handling;
+// parent routes below that prefix are shadowed.
+//
 // Arc normally matches paths using req.URL.Path as parsed by net/http. When
 // req.URL.RawPath preserves an escaped slash, Arc matches an internal decoded
 // path where the escaped slash stays inside its segment, then restores captured

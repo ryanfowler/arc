@@ -1060,6 +1060,42 @@ func TestSubRouterReturnsChildNotFoundAndMethodNotAllowed(t *testing.T) {
 	assertStatus(t, methodNotAllowed, http.StatusConflict)
 }
 
+func TestSubRouterShadowsParentRouteUnderSamePrefix(t *testing.T) {
+	tests := []struct {
+		name     string
+		register func(*Router)
+	}{
+		{
+			name: "subrouter first",
+			register: func(r *Router) {
+				api := r.SubRouter("/api")
+				api.SetNotFound(http.HandlerFunc(writeStatus(http.StatusGone)))
+				r.Get("/api/healthz", writeStatus(http.StatusNoContent))
+			},
+		},
+		{
+			name: "route first",
+			register: func(r *Router) {
+				r.Get("/api/healthz", writeStatus(http.StatusNoContent))
+				api := r.SubRouter("/api")
+				api.SetNotFound(http.HandlerFunc(writeStatus(http.StatusGone)))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := New()
+			tt.register(r)
+
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/healthz", nil))
+
+			assertStatus(t, rec, http.StatusGone)
+		})
+	}
+}
+
 func TestSubRouterSnapshotsFallbackHandlers(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api")
@@ -1716,6 +1752,40 @@ func TestMountConflictsWithSubRouter(t *testing.T) {
 	var conflict *match.ConflictError
 	if err := r.MountErr("/api/v{version}.json", writeStatus(http.StatusCreated)); !errors.As(err, &conflict) {
 		t.Fatalf("MountErr conflict error = %v, want *match.ConflictError", err)
+	}
+}
+
+func TestMountShadowsParentRouteUnderSamePrefix(t *testing.T) {
+	tests := []struct {
+		name     string
+		register func(*Router)
+	}{
+		{
+			name: "mount first",
+			register: func(r *Router) {
+				r.Mount("/api", writeStatus(http.StatusGone))
+				r.Get("/api/healthz", writeStatus(http.StatusNoContent))
+			},
+		},
+		{
+			name: "route first",
+			register: func(r *Router) {
+				r.Get("/api/healthz", writeStatus(http.StatusNoContent))
+				r.Mount("/api", writeStatus(http.StatusGone))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := New()
+			tt.register(r)
+
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/healthz", nil))
+
+			assertStatus(t, rec, http.StatusGone)
+		})
 	}
 }
 

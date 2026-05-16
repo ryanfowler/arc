@@ -224,6 +224,19 @@ at `/api` receives `/users` for a request to `/api/users`. Both `/api` and
 The original request URL is not rewritten for subrouters. Middleware and
 handlers still see the original `req.URL.Path`.
 
+Subrouters are matched before routes registered directly on the parent router.
+Once a subrouter matches its prefix, the child owns the request, including
+not-found and method-not-allowed handling. Register routes for that prefix on
+the child:
+
+```go
+api := r.SubRouter("/api")
+api.Get("/healthz", healthz) // handles /api/healthz
+```
+
+A parent route such as `r.Get("/api/healthz", healthz)` is shadowed by the
+`/api` subrouter for requests to `/api/healthz`.
+
 ## Mount Existing Handlers
 
 Use `Mount` when another `http.Handler` should own everything below a path.
@@ -240,6 +253,10 @@ both `/assets` and `/assets/` are dispatched as `/`.
 
 Mount parameters are available with `arc.Param`, and with `req.PathValue` when
 request path values are enabled.
+
+Mounts are also matched before routes registered directly on the parent router.
+Once a mount matches its prefix, the mounted handler owns the request. Parent
+routes below that prefix are shadowed.
 
 ## Route by Host
 
