@@ -1068,7 +1068,7 @@ func TestSubRouterReturnsChildNotFoundAndMethodNotAllowed(t *testing.T) {
 	assertStatus(t, methodNotAllowed, http.StatusConflict)
 }
 
-func TestSubRouterShadowsParentRouteUnderSamePrefix(t *testing.T) {
+func TestParentRouteWinsOverSubRouterUnderSamePrefix(t *testing.T) {
 	tests := []struct {
 		name     string
 		register func(*Router)
@@ -1099,9 +1099,38 @@ func TestSubRouterShadowsParentRouteUnderSamePrefix(t *testing.T) {
 			rec := httptest.NewRecorder()
 			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/healthz", nil))
 
-			assertStatus(t, rec, http.StatusGone)
+			assertStatus(t, rec, http.StatusNoContent)
 		})
 	}
+}
+
+func TestParentParamRouteWinsOverSubRouterUnderSamePrefix(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api")
+	api.Get("/{id}", writeStatus(http.StatusGone))
+	r.Get("/api/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "id"); got != "42" {
+			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/42", nil))
+
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func TestRoutePrefixDoesNotBlockShorterSubRouter(t *testing.T) {
+	r := New()
+	root := r.SubRouter("/")
+	root.Get("/api/users", writeStatus(http.StatusAccepted))
+	r.Get("/api", writeStatus(http.StatusNoContent))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/users", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
 }
 
 func TestSubRouterSnapshotsFallbackHandlers(t *testing.T) {
@@ -1763,7 +1792,7 @@ func TestMountConflictsWithSubRouter(t *testing.T) {
 	}
 }
 
-func TestMountShadowsParentRouteUnderSamePrefix(t *testing.T) {
+func TestParentRouteWinsOverMountUnderSamePrefix(t *testing.T) {
 	tests := []struct {
 		name     string
 		register func(*Router)
@@ -1792,7 +1821,7 @@ func TestMountShadowsParentRouteUnderSamePrefix(t *testing.T) {
 			rec := httptest.NewRecorder()
 			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/healthz", nil))
 
-			assertStatus(t, rec, http.StatusGone)
+			assertStatus(t, rec, http.StatusNoContent)
 		})
 	}
 }

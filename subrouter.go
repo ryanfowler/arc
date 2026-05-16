@@ -19,11 +19,12 @@ import (
 // URL is not rewritten; middleware and handlers still see the original
 // req.URL.Path.
 //
-// Subrouters are matched before routes registered directly on the parent. Once
-// a subrouter matches its prefix, the child owns the request, including child
-// not-found and method-not-allowed handling. Register routes such as
-// /api/healthz on the child as /healthz; a parent route at /api/healthz is
-// shadowed by the /api subrouter.
+// Subrouters and direct parent routes share one path matcher. The most specific
+// path wins, so a parent route such as /api/healthz handles that exact path even
+// when /api is a subrouter. Other paths under the subrouter prefix are owned by
+// the child, including child not-found and method-not-allowed handling. Register
+// routes such as /api/healthz on the child as /healthz when they should use the
+// child's middleware and fallback settings.
 //
 // Middleware already registered on the parent wraps the child router. Middleware
 // added to the child applies only inside the child router, including child
@@ -55,7 +56,7 @@ func (r *Router) SubRouterErr(pattern string) (*Router, error) {
 	if err := validateUniqueParamNames(matchPattern); err != nil {
 		return nil, err
 	}
-	if err := r.subMounts.TryInsert(matchPattern, child); err != nil {
+	if err := r.insertChildPathEntries(childPathRegistrations(matchPattern, child)); err != nil {
 		return nil, err
 	}
 
@@ -77,10 +78,10 @@ func (r *Router) SubRouterErr(pattern string) (*Router, error) {
 // as /. Middleware already registered on the parent sees the original request
 // path and wraps the mounted handler.
 //
-// Mounted handlers are matched before routes registered directly on the parent.
-// Once a mount matches its prefix, the mounted handler owns the request. A
-// parent route below the mounted prefix, such as /assets/healthz, is shadowed by
-// the mount.
+// Mounted handlers and direct parent routes share one path matcher. The most
+// specific path wins, so a parent route below the mounted prefix, such as
+// /assets/healthz, handles that exact path. Other paths under the mounted prefix
+// are owned by the mounted handler.
 //
 // Invalid, duplicate, or ambiguous mount patterns panic with the error returned
 // by match. Use MountErr to receive the registration error instead.
@@ -112,7 +113,7 @@ func (r *Router) MountErr(pattern string, h http.Handler) error {
 	if err := validateUniqueParamNames(matchPattern); err != nil {
 		return err
 	}
-	if err := r.subMounts.TryInsert(matchPattern, child); err != nil {
+	if err := r.insertChildPathEntries(childPathRegistrations(matchPattern, child)); err != nil {
 		return err
 	}
 
@@ -143,4 +144,23 @@ func cleanMountPattern(pattern string) string {
 		}
 	}
 	return pattern
+}
+
+func childPathRegistrations(pattern string, child *childRouter) []childPathRegistration {
+	regs := []childPathRegistration{{
+		pattern: pattern,
+		child:   child,
+	}}
+	if patternHasFinalCatchAll(pattern) {
+		return regs
+	}
+
+	if pattern != "/" {
+		regs = append(regs, childPathRegistration{
+			pattern: pattern + "/",
+			child:   child,
+		})
+	}
+
+	return regs
 }
