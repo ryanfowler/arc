@@ -67,7 +67,7 @@ func (r *Router) handleErr(method, pattern string, h http.Handler, anyMethod boo
 	registration := routeRegistration{
 		method:      method,
 		anyMethod:   anyMethod,
-		pattern:     pattern,
+		pattern:     normalizeEscapedSlashPattern(pattern),
 		fullPattern: fullPattern,
 		route:       rt,
 	}

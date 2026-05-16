@@ -4,11 +4,15 @@ import (
 	"context"
 	"net"
 	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 
 	"github.com/ryanfowler/match"
+)
+
+const (
+	escapedSlashMarker = byte(0)
+	escapedSlashCode   = byte('s')
 )
 
 // Middleware wraps an HTTP handler on a Router.
@@ -202,9 +206,10 @@ func (r *Router) Use(mw ...Middleware) {
 // handler, or route.
 //
 // Route and subrouter matching uses req.URL.Path unless req.URL.RawPath
-// preserves an escaped slash. In that case, Arc matches the escaped path so the
-// slash stays inside its segment and decodes captured params before exposing
-// them. Arc does not perform net/http.ServeMux path cleaning redirects.
+// preserves an escaped slash. In that case, Arc matches an internal decoded
+// path where the escaped slash stays inside its segment and restores captured
+// params before exposing them. Arc does not perform net/http.ServeMux path
+// cleaning redirects.
 //
 // ServeHTTP satisfies http.Handler. It should usually be called by net/http
 // rather than directly.
@@ -687,11 +692,7 @@ func dispatchState(req *http.Request) (string, match.Params, bool) {
 }
 
 func escapedSlashMatchPath(req *http.Request) (string, bool) {
-	path := req.URL.EscapedPath()
-	if !hasEscapedSlash(path) {
-		return req.URL.Path, false
-	}
-	return path, true
+	return markEscapedSlashes(req.URL.Path, req.URL.EscapedPath())
 }
 
 func hasEscapedSlash(path string) bool {
@@ -703,6 +704,246 @@ func hasEscapedSlash(path string) bool {
 	return false
 }
 
+func markEscapedSlashes(decoded, escaped string) (string, bool) {
+	var b strings.Builder
+	decodedStart := 0
+	decodedIndex := 0
+	marked := false
+	escapeMarkers := false
+
+	for i := 0; i < len(escaped); {
+		if escaped[i] != '%' || i+2 >= len(escaped) {
+			decodedIndex++
+			i++
+			continue
+		}
+
+		if escaped[i+1] == '0' && escaped[i+2] == '0' {
+			escapeMarkers = true
+		}
+		if escaped[i+1] == '2' && (escaped[i+2] == 'f' || escaped[i+2] == 'F') {
+			if !marked {
+				b.Grow(len(decoded) + 1)
+				marked = true
+			}
+			writeDecodedMatchChunk(&b, decoded[decodedStart:decodedIndex], escapeMarkers)
+			b.WriteByte(escapedSlashMarker)
+			b.WriteByte(escapedSlashCode)
+			decodedIndex++
+			decodedStart = decodedIndex
+		} else {
+			decodedIndex++
+		}
+		i += 3
+	}
+
+	if !marked {
+		return decoded, false
+	}
+	writeDecodedMatchChunk(&b, decoded[decodedStart:], escapeMarkers)
+	return b.String(), true
+}
+
+func writeDecodedMatchChunk(b *strings.Builder, s string, escapeMarkers bool) {
+	if !escapeMarkers {
+		b.WriteString(s)
+		return
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] == escapedSlashMarker {
+			b.WriteByte(escapedSlashMarker)
+			b.WriteByte(escapedSlashMarker)
+		} else {
+			b.WriteByte(s[i])
+		}
+	}
+}
+
+func normalizeEscapedSlashPattern(pattern string) string {
+	if !hasEscapedSlashPattern(pattern) {
+		return pattern
+	}
+
+	var b strings.Builder
+	b.Grow(len(pattern))
+	inParam := false
+	for i := 0; i < len(pattern); {
+		if inParam {
+			b.WriteByte(pattern[i])
+			if pattern[i] == '{' && i+1 < len(pattern) && pattern[i+1] == '{' {
+				b.WriteByte(pattern[i+1])
+				i += 2
+				continue
+			}
+			if pattern[i] == '}' {
+				if i+1 < len(pattern) && pattern[i+1] == '}' {
+					b.WriteByte(pattern[i+1])
+					i += 2
+					continue
+				}
+				inParam = false
+			}
+			i++
+			continue
+		}
+
+		switch pattern[i] {
+		case '{':
+			b.WriteByte(pattern[i])
+			if i+1 < len(pattern) && pattern[i+1] == '{' {
+				b.WriteByte(pattern[i+1])
+				i += 2
+				continue
+			}
+			inParam = true
+			i++
+		case '}':
+			b.WriteByte(pattern[i])
+			if i+1 < len(pattern) && pattern[i+1] == '}' {
+				b.WriteByte(pattern[i+1])
+				i += 2
+				continue
+			}
+			i++
+		case '%':
+			if i+2 >= len(pattern) {
+				b.WriteByte(pattern[i])
+				i++
+				continue
+			}
+			hi, ok := fromHex(pattern[i+1])
+			if !ok {
+				b.WriteByte(pattern[i])
+				i++
+				continue
+			}
+			lo, ok := fromHex(pattern[i+2])
+			if !ok {
+				b.WriteByte(pattern[i])
+				i++
+				continue
+			}
+			writePatternByte(&b, hi<<4|lo)
+			i += 3
+		default:
+			if pattern[i] == escapedSlashMarker {
+				b.WriteByte(escapedSlashMarker)
+				b.WriteByte(escapedSlashMarker)
+			} else {
+				b.WriteByte(pattern[i])
+			}
+			i++
+		}
+	}
+	return b.String()
+}
+
+func hasEscapedSlashPattern(pattern string) bool {
+	inParam := false
+	for i := 0; i < len(pattern); {
+		if inParam {
+			if pattern[i] == '{' && i+1 < len(pattern) && pattern[i+1] == '{' {
+				i += 2
+				continue
+			}
+			if pattern[i] == '}' {
+				if i+1 < len(pattern) && pattern[i+1] == '}' {
+					i += 2
+					continue
+				}
+				inParam = false
+			}
+			i++
+			continue
+		}
+
+		switch pattern[i] {
+		case '{':
+			if i+1 < len(pattern) && pattern[i+1] == '{' {
+				i += 2
+				continue
+			}
+			inParam = true
+			i++
+		case '%':
+			if i+2 < len(pattern) && pattern[i+1] == '2' && (pattern[i+2] == 'f' || pattern[i+2] == 'F') {
+				return true
+			}
+			i++
+		default:
+			i++
+		}
+	}
+	return false
+}
+
+func writePatternByte(b *strings.Builder, c byte) {
+	switch c {
+	case '{':
+		b.WriteString("{{")
+	case '}':
+		b.WriteString("}}")
+	default:
+		writeMatchByte(b, c)
+	}
+}
+
+func writeMatchByte(b *strings.Builder, c byte) {
+	switch c {
+	case '/':
+		b.WriteByte(escapedSlashMarker)
+		b.WriteByte(escapedSlashCode)
+	case escapedSlashMarker:
+		b.WriteByte(escapedSlashMarker)
+		b.WriteByte(escapedSlashMarker)
+	default:
+		b.WriteByte(c)
+	}
+}
+
+func fromHex(c byte) (byte, bool) {
+	switch {
+	case '0' <= c && c <= '9':
+		return c - '0', true
+	case 'a' <= c && c <= 'f':
+		return c - 'a' + 10, true
+	case 'A' <= c && c <= 'F':
+		return c - 'A' + 10, true
+	default:
+		return 0, false
+	}
+}
+
+func restoreEscapedSlash(path string) string {
+	if strings.IndexByte(path, escapedSlashMarker) < 0 {
+		return path
+	}
+
+	var b strings.Builder
+	b.Grow(len(path))
+	for i := 0; i < len(path); i++ {
+		if path[i] != escapedSlashMarker {
+			b.WriteByte(path[i])
+			continue
+		}
+		if i+1 >= len(path) {
+			b.WriteByte(path[i])
+			continue
+		}
+		i++
+		switch path[i] {
+		case escapedSlashCode:
+			b.WriteByte('/')
+		case escapedSlashMarker:
+			b.WriteByte(escapedSlashMarker)
+		default:
+			b.WriteByte(escapedSlashMarker)
+			b.WriteByte(path[i])
+		}
+	}
+	return b.String()
+}
+
 func restoreParams(params match.Params) match.Params {
 	if params.Len() == 0 {
 		return params
@@ -711,10 +952,7 @@ func restoreParams(params match.Params) match.Params {
 	var restored []match.Param
 	for i := 0; i < params.Len(); i++ {
 		param := params.At(i)
-		val, err := url.PathUnescape(param.Val)
-		if err != nil {
-			val = param.Val
-		}
+		val := restoreEscapedSlash(param.Val)
 		if val == param.Val && restored == nil {
 			continue
 		}
@@ -730,11 +968,7 @@ func restoreParams(params match.Params) match.Params {
 }
 
 func decodedMatchPath(path string) string {
-	decoded, err := url.PathUnescape(path)
-	if err != nil {
-		return path
-	}
-	return decoded
+	return restoreEscapedSlash(path)
 }
 
 func dispatchPath(req *http.Request) (string, bool) {

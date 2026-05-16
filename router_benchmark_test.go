@@ -112,6 +112,28 @@ func BenchmarkRouterServeHTTP(b *testing.B) {
 			},
 		},
 		{
+			name: "escaped_slash_param",
+			new: func() (*Router, *http.Request) {
+				r := New()
+				r.Get("/files/{name}", func(w http.ResponseWriter, req *http.Request) {
+					benchmarkParam = Param(req, "name")
+					w.WriteHeader(http.StatusNoContent)
+				})
+				return r, httptest.NewRequest(http.MethodGet, "/files/a%2Fb", nil)
+			},
+		},
+		{
+			name: "escaped_slash_decoded_static",
+			new: func() (*Router, *http.Request) {
+				r := New()
+				r.Get("/files/{name}/meta data", func(w http.ResponseWriter, req *http.Request) {
+					benchmarkParam = Param(req, "name")
+					w.WriteHeader(http.StatusNoContent)
+				})
+				return r, httptest.NewRequest(http.MethodGet, "/files/a%2Fb/meta%20data", nil)
+			},
+		},
+		{
 			name: "method_not_allowed",
 			new: func() (*Router, *http.Request) {
 				r := New()

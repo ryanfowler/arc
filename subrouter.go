@@ -45,7 +45,7 @@ func (r *Router) SubRouterErr(pattern string) (*Router, error) {
 	child := newChildRouter(r)
 	pattern = cleanMountPattern(pattern)
 
-	if err := r.subMounts.TryInsert(pattern, child); err != nil {
+	if err := r.subMounts.TryInsert(normalizeEscapedSlashPattern(pattern), child); err != nil {
 		return nil, err
 	}
 
@@ -92,7 +92,7 @@ func (r *Router) MountErr(pattern string, h http.Handler) error {
 		mounted: true,
 		pattern: joinPatterns(r.patternPrefix, pattern),
 	}
-	if err := r.subMounts.TryInsert(pattern, child); err != nil {
+	if err := r.subMounts.TryInsert(normalizeEscapedSlashPattern(pattern), child); err != nil {
 		return err
 	}
 
