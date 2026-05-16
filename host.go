@@ -33,10 +33,15 @@ func (r *Router) Host(pattern string) *Router {
 // pattern, and returns registration errors.
 //
 // Host patterns use the github.com/ryanfowler/match grammar. Registration
-// errors include invalid parameter syntax and host conflicts reported by match.
+// errors include invalid parameter syntax, duplicate parameter names within the
+// pattern, and host conflicts reported by match.
 func (r *Router) HostErr(pattern string) (*Router, error) {
 	child := newChildRouter(r)
-	if err := r.hostRoutes.TryInsert(normalizeHost(pattern), child); err != nil {
+	matchPattern := normalizeHost(pattern)
+	if err := validateUniqueParamNames(matchPattern); err != nil {
+		return nil, err
+	}
+	if err := r.hostRoutes.TryInsert(matchPattern, child); err != nil {
 		return nil, err
 	}
 	r.hasHosts = true

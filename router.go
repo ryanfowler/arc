@@ -2,6 +2,7 @@ package arc
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"sort"
@@ -14,6 +15,10 @@ const (
 	escapedSlashMarker = byte(0)
 	escapedSlashCode   = byte('s')
 )
+
+// ErrDuplicateParamName reports a single registered pattern that captures the
+// same parameter name more than once.
+var ErrDuplicateParamName = fmt.Errorf("%w: duplicate parameter names are not allowed within one pattern", match.ErrInvalidParam)
 
 // Middleware wraps an HTTP handler on a Router.
 //
@@ -342,6 +347,10 @@ func (r *Router) insertRoute(reg routeRegistration) error {
 }
 
 func insertRouteRegistration(methodRoutes *match.Router[*routeMethods], methodsByPattern map[string]*routeMethods, reg routeRegistration) error {
+	if err := validateUniqueParamNames(reg.pattern); err != nil {
+		return err
+	}
+
 	methods := methodsByPattern[reg.pattern]
 	if methods == nil {
 		methods = &routeMethods{pattern: reg.fullPattern}
@@ -875,6 +884,117 @@ func hasEscapedSlashPattern(pattern string) bool {
 		}
 	}
 	return false
+}
+
+func validateUniqueParamNames(pattern string) error {
+	seen := make(map[string]struct{})
+	paramsInSegment := 0
+
+	for i := 0; i < len(pattern); {
+		switch pattern[i] {
+		case '/':
+			paramsInSegment = 0
+			i++
+		case '{':
+			if i+1 < len(pattern) && pattern[i+1] == '{' {
+				i += 2
+				continue
+			}
+
+			end, err := findPatternParamEnd(pattern, i+1)
+			if err != nil {
+				return err
+			}
+			name := unescapePatternParamName(pattern[i+1 : end])
+			if name == "" {
+				return match.ErrInvalidParam
+			}
+
+			paramsInSegment++
+			if paramsInSegment > 1 {
+				return match.ErrInvalidParamSegment
+			}
+
+			if name[0] == '*' {
+				name = name[1:]
+				if name == "" {
+					return match.ErrInvalidParam
+				}
+				if end+1 != len(pattern) {
+					return match.ErrInvalidCatchAll
+				}
+			}
+
+			if _, ok := seen[name]; ok {
+				return ErrDuplicateParamName
+			}
+			seen[name] = struct{}{}
+			i = end + 1
+		case '}':
+			if i+1 < len(pattern) && pattern[i+1] == '}' {
+				i += 2
+				continue
+			}
+			return match.ErrInvalidParam
+		default:
+			i++
+		}
+	}
+
+	return nil
+}
+
+func findPatternParamEnd(pattern string, start int) (int, error) {
+	for i := start; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '{':
+			if i+1 < len(pattern) && pattern[i+1] == '{' {
+				i++
+				continue
+			}
+		case '}':
+			if i+1 < len(pattern) && pattern[i+1] == '}' {
+				i++
+				continue
+			}
+			if i == start || pattern[i-1] == '*' {
+				return 0, match.ErrInvalidParam
+			}
+			return i, nil
+		case '/':
+			return 0, match.ErrInvalidParam
+		case '*':
+			if i != start {
+				return 0, match.ErrInvalidParam
+			}
+			if i+1 == len(pattern) || pattern[i+1] == '}' {
+				return 0, match.ErrInvalidParam
+			}
+		}
+	}
+
+	return 0, match.ErrInvalidParam
+}
+
+func unescapePatternParamName(s string) string {
+	for i := 0; i < len(s); i++ {
+		if i+1 < len(s) && ((s[i] == '{' && s[i+1] == '{') || (s[i] == '}' && s[i+1] == '}')) {
+			var b strings.Builder
+			b.Grow(len(s) - 1)
+			b.WriteString(s[:i])
+			for ; i < len(s); i++ {
+				if i+1 < len(s) && ((s[i] == '{' && s[i+1] == '{') || (s[i] == '}' && s[i+1] == '}')) {
+					b.WriteByte(s[i])
+					i++
+					continue
+				}
+				b.WriteByte(s[i])
+			}
+			return b.String()
+		}
+	}
+
+	return s
 }
 
 func writePatternByte(b *strings.Builder, c byte) {
