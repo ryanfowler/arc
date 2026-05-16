@@ -85,14 +85,21 @@ func (r *Router) handleErr(method, pattern string, h http.Handler, anyMethod boo
 //
 // HandleFunc is a convenience wrapper around Handle.
 func (r *Router) HandleFunc(pattern string, h http.HandlerFunc) {
-	r.Handle(pattern, h)
+	r.Handle(pattern, handlerFuncOrNil(h))
 }
 
 // HandleMethodFunc registers h for one HTTP method and pattern.
 //
 // HandleMethodFunc is a convenience wrapper around HandleMethod.
 func (r *Router) HandleMethodFunc(method, pattern string, h http.HandlerFunc) {
-	r.HandleMethod(method, pattern, h)
+	r.HandleMethod(method, pattern, handlerFuncOrNil(h))
+}
+
+func handlerFuncOrNil(h http.HandlerFunc) http.Handler {
+	if h == nil {
+		return nil
+	}
+	return h
 }
 
 // Get registers h for GET requests matching pattern.
