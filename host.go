@@ -1,5 +1,7 @@
 package arc
 
+import "github.com/ryanfowler/match"
+
 // Host registers and returns a child router for requests whose host matches
 // pattern.
 //
@@ -38,6 +40,9 @@ func (r *Router) Host(pattern string) *Router {
 func (r *Router) HostErr(pattern string) (*Router, error) {
 	child := newChildRouter(r)
 	matchPattern := normalizeHostPattern(pattern)
+	if matchPattern == "" {
+		return nil, match.ErrInvalidParam
+	}
 	if err := validateUniqueParamNames(matchPattern); err != nil {
 		return nil, err
 	}
