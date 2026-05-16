@@ -11,9 +11,9 @@ import (
 // github.com/ryanfowler/match route grammar; for example, /users/{id} captures
 // one segment and /assets/{*path} captures the remaining path.
 //
-// Subrouters and mounted handlers are matched before routes on the same router.
-// A parent route below a mounted prefix, such as /api/healthz when /api is a
-// subrouter or mount, is not reached by requests under that prefix.
+// Routes, subrouters, and mounted handlers share one path matcher on the same
+// router. The most specific path wins, so a direct route below a mounted prefix,
+// such as /api/healthz when /api is a subrouter or mount, handles that path.
 //
 // Invalid, duplicate, or ambiguous patterns panic with the error returned by
 // match. Use HandleErr to receive the registration error instead.
@@ -31,9 +31,9 @@ func (r *Router) Handle(pattern string, h http.Handler) {
 // pattern, and route conflicts reported by match. A nil handler is treated as
 // http.NotFoundHandler.
 //
-// Subrouters and mounted handlers are matched before routes on the same router.
-// A route below a mounted prefix is shadowed by that child for requests under
-// the prefix.
+// Routes, subrouters, and mounted handlers share one path matcher on the same
+// router. The most specific path wins, so a direct route below a mounted prefix
+// handles that path.
 func (r *Router) HandleErr(pattern string, h http.Handler) error {
 	return r.handleErr("", pattern, h, true)
 }

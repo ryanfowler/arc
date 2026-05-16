@@ -44,11 +44,12 @@ type RequestParams = match.Params
 // registration and configuration methods are not safe to call concurrently with
 // ServeHTTP or with other registration and configuration methods.
 type Router struct {
-	methodRoutes  match.Router[*routeMethods]
-	routeMethods  map[string]*routeMethods
-	subMounts     match.Router[*childRouter]
+	pathRoutes    match.Router[*pathEntry]
+	pathEntries   map[string]*pathEntry
+	pathPatterns  []string
 	hostRoutes    match.Router[*childRouter]
 	hasHosts      bool
+	hasRoutes     bool
 	hasSubRouters bool
 
 	middleware []Middleware
@@ -62,6 +63,11 @@ type Router struct {
 	implicitHead      bool
 	requestPathValues bool
 	patternPrefix     string
+}
+
+type pathEntry struct {
+	methods *routeMethods
+	child   *childRouter
 }
 
 type route struct {
@@ -114,7 +120,7 @@ func (h routerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 // they are created.
 func New() *Router {
 	r := &Router{
-		routeMethods:     make(map[string]*routeMethods),
+		pathEntries:      make(map[string]*pathEntry),
 		notFound:         http.NotFoundHandler(),
 		methodNotAllowed: http.HandlerFunc(defaultMethodNotAllowed),
 		strictSlash:      true,
@@ -207,14 +213,14 @@ func (r *Router) Use(mw ...Middleware) {
 	r.compileFallbacks()
 }
 
-// ServeHTTP dispatches req to the best matching host router, subrouter, mounted
-// handler, or route.
+// ServeHTTP dispatches req to the best matching host router, route, subrouter,
+// or mounted handler.
 //
-// Dispatch checks host routers first, then subrouters and mounted handlers, and
-// then routes registered directly on this router. When a subrouter or mounted
-// handler matches a prefix, it owns the request, including not-found and
-// method-not-allowed handling; routes on the parent below the same prefix are
-// not considered.
+// Dispatch checks host routers first. Inside a host or ordinary router, routes,
+// subrouters, and mounted handlers share one path matcher, so the most specific
+// path wins. A route registered directly on a router can therefore handle a
+// path below a subrouter or mounted prefix; other paths below that prefix are
+// still owned by the child, including not-found and method-not-allowed handling.
 //
 // Route and subrouter matching uses req.URL.Path unless req.URL.RawPath
 // preserves an escaped slash. In that case, Arc matches an internal decoded
@@ -242,10 +248,7 @@ func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, pa
 	if r.serveHost(w, req, path, params, decodeParams) {
 		return
 	}
-	if r.serveSubRouter(w, req, path, params, decodeParams) {
-		return
-	}
-	if r.serveRoute(w, req, path, params, decodeParams) {
+	if r.servePath(w, req, path, params, decodeParams) {
 		return
 	}
 
@@ -271,59 +274,123 @@ func (r *Router) serveHost(w http.ResponseWriter, req *http.Request, path string
 	return true
 }
 
-func (r *Router) serveSubRouter(w http.ResponseWriter, req *http.Request, path string, params match.Params, decodeParams bool) bool {
+func (r *Router) servePath(w http.ResponseWriter, req *http.Request, path string, params match.Params, decodeParams bool) bool {
+	var entry *pathEntry
+	var pathParams match.Params
+	var ok bool
+
+	if r.hasRoutes {
+		entry, pathParams, ok = r.pathRoutes.Match(path)
+		if ok && entry.methods != nil {
+			if decodeParams {
+				pathParams = restoreParams(pathParams)
+			}
+			r.serveRouteMethods(w, req, entry.methods, mergeParams(params, pathParams))
+			return true
+		}
+
+		if relaxedPath, relaxed := r.relaxedSlashPath(path); relaxed {
+			relaxedEntry, relaxedParams, relaxedOK := r.pathRoutes.Match(relaxedPath)
+			if relaxedOK && relaxedEntry.methods != nil && !routePatternEndsInSlash(relaxedEntry.methods.pattern) {
+				if decodeParams {
+					relaxedParams = restoreParams(relaxedParams)
+				}
+				r.serveRouteMethods(w, req, relaxedEntry.methods, mergeParams(params, relaxedParams))
+				return true
+			}
+		}
+	}
+
+	if ok && entry.child != nil {
+		if decodeParams {
+			pathParams = restoreParams(pathParams)
+		}
+		entry.child.serve(w, req, "/", mergeParams(params, pathParams), decodeParams)
+		return true
+	}
+
 	if !r.hasSubRouters {
 		return false
 	}
 
-	mount, ok := r.subMounts.MatchPrefix(path)
-	if !ok {
+	child, childPath, childParams, childOK := r.matchChildPrefix(path)
+	if !childOK {
 		return false
 	}
-
-	mountParams := mount.Params
 	if decodeParams {
-		mountParams = restoreParams(mountParams)
+		childParams = restoreParams(childParams)
 	}
-	mount.Value.serve(w, req, mount.Rest, mergeParams(params, mountParams), decodeParams)
+	child.serve(w, req, childPath, mergeParams(params, childParams), decodeParams)
 	return true
 }
 
-func (r *Router) serveRoute(w http.ResponseWriter, req *http.Request, path string, params match.Params, decodeParams bool) bool {
-	methods, routeParams, ok := r.matchMethodRoute(path, decodeParams)
-	if !ok {
-		return false
+func (r *Router) matchChildPrefix(path string) (*childRouter, string, match.Params, bool) {
+	mount, ok := r.pathRoutes.MatchPrefix(path)
+	if ok && mount.Value.child != nil {
+		return mount.Value.child, mount.Rest, mount.Params, true
 	}
+
+	for end := len(path); ; {
+		slash := strings.LastIndexByte(path[:end], '/')
+		if slash < 0 {
+			return nil, "", match.Params{}, false
+		}
+
+		prefix := path[:slash]
+		if slash == 0 {
+			prefix = "/"
+		}
+
+		entry, params, ok := r.pathRoutes.Match(prefix)
+		if ok && entry.child != nil {
+			return entry.child, childPrefixRest(path, prefix), params, true
+		}
+
+		if slash == 0 {
+			return nil, "", match.Params{}, false
+		}
+		end = slash
+	}
+}
+
+func childPrefixRest(path, prefix string) string {
+	if prefix == "/" {
+		return remainingChildPath(path, 1)
+	}
+	if len(prefix) >= len(path) {
+		return "/"
+	}
+	if path[len(prefix)] != '/' {
+		return "/"
+	}
+	return remainingChildPath(path, len(prefix)+1)
+}
+
+func remainingChildPath(path string, index int) string {
+	if index < 0 || index > len(path) || index == len(path) {
+		return "/"
+	}
+	if path[index] == '/' {
+		if index == 1 && len(path) > 1 && path[0] == '/' {
+			return "/" + path[index+1:]
+		}
+		return path[index:]
+	}
+	if index == 0 {
+		return path
+	}
+	return path[index-1:]
+}
+
+func (r *Router) serveRouteMethods(w http.ResponseWriter, req *http.Request, methods *routeMethods, params match.Params) {
 	route := methods.routeFor(req.Method, r.implicitHead)
 	if route == nil {
 		w.Header().Set("Allow", methods.allowHeader(r.implicitHead))
-		r.methodNotAllowedHandler.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams), methods.pattern, r.requestPathValues))
-		return true
+		r.methodNotAllowedHandler.ServeHTTP(w, requestForHandler(req, params, methods.pattern, r.requestPathValues))
+		return
 	}
 
-	route.handler.ServeHTTP(w, requestForHandler(req, mergeParams(params, routeParams), route.pattern, r.requestPathValues))
-	return true
-}
-
-func (r *Router) matchMethodRoute(path string, decodeParams bool) (*routeMethods, match.Params, bool) {
-	methods, params, ok := r.methodRoutes.Match(path)
-	if ok {
-		if decodeParams {
-			params = restoreParams(params)
-		}
-		return methods, params, true
-	}
-	if path, ok = r.relaxedSlashPath(path); !ok {
-		return nil, match.Params{}, false
-	}
-	methods, params, ok = r.methodRoutes.Match(path)
-	if !ok || routePatternEndsInSlash(methods.pattern) {
-		return nil, match.Params{}, false
-	}
-	if decodeParams {
-		params = restoreParams(params)
-	}
-	return methods, params, true
+	route.handler.ServeHTTP(w, requestForHandler(req, params, route.pattern, r.requestPathValues))
 }
 
 func (r *Router) relaxedSlashPath(path string) (string, bool) {
@@ -354,24 +421,121 @@ func joinPatterns(prefix, pattern string) string {
 }
 
 func (r *Router) insertRoute(reg routeRegistration) error {
-	return insertRouteRegistration(&r.methodRoutes, r.routeMethods, reg)
+	return insertRouteRegistration(r, reg)
 }
 
-func insertRouteRegistration(methodRoutes *match.Router[*routeMethods], methodsByPattern map[string]*routeMethods, reg routeRegistration) error {
+func insertRouteRegistration(r *Router, reg routeRegistration) error {
 	if err := validateUniqueParamNames(reg.pattern); err != nil {
 		return err
 	}
 
-	methods := methodsByPattern[reg.pattern]
-	if methods == nil {
-		methods = &routeMethods{pattern: reg.fullPattern}
-		if err := methodRoutes.TryInsert(reg.pattern, methods); err != nil {
+	entry := r.pathEntries[reg.pattern]
+	if entry == nil {
+		if r.pathEntries == nil {
+			r.pathEntries = make(map[string]*pathEntry)
+		}
+		entry = &pathEntry{}
+		if err := r.pathRoutes.TryInsert(reg.pattern, entry); err != nil {
 			return err
 		}
-		methodsByPattern[reg.pattern] = methods
+		r.pathEntries[reg.pattern] = entry
+		r.pathPatterns = append(r.pathPatterns, reg.pattern)
 	}
 
-	return methods.addRoute(reg)
+	if entry.methods == nil {
+		entry.methods = &routeMethods{pattern: reg.fullPattern}
+	}
+
+	if err := entry.methods.addRoute(reg); err != nil {
+		return err
+	}
+
+	r.hasRoutes = true
+	return nil
+}
+
+type childPathRegistration struct {
+	pattern string
+	child   *childRouter
+}
+
+func (r *Router) insertChildPathEntries(regs []childPathRegistration) error {
+	nextRoutes, nextEntries, nextPatterns, err := r.clonePathEntries()
+	if err != nil {
+		return err
+	}
+
+	for _, reg := range regs {
+		entry := nextEntries[reg.pattern]
+		if entry != nil {
+			if entry.child != nil {
+				return &match.ConflictError{Route: reg.pattern, With: reg.pattern}
+			}
+			entry.child = reg.child
+			continue
+		}
+
+		entry = &pathEntry{
+			child: reg.child,
+		}
+		if err := nextRoutes.TryInsert(reg.pattern, entry); err != nil {
+			return err
+		}
+		nextEntries[reg.pattern] = entry
+		nextPatterns = append(nextPatterns, reg.pattern)
+	}
+
+	r.pathRoutes = nextRoutes
+	r.pathEntries = nextEntries
+	r.pathPatterns = nextPatterns
+	return nil
+}
+
+func (r *Router) clonePathEntries() (match.Router[*pathEntry], map[string]*pathEntry, []string, error) {
+	var routes match.Router[*pathEntry]
+	entries := make(map[string]*pathEntry, len(r.pathEntries))
+	patterns := make([]string, 0, len(r.pathPatterns))
+
+	for _, pattern := range r.pathPatterns {
+		entry := r.pathEntries[pattern]
+		if entry == nil {
+			continue
+		}
+		clone := clonePathEntry(entry)
+		if err := routes.TryInsert(pattern, clone); err != nil {
+			return match.Router[*pathEntry]{}, nil, nil, err
+		}
+		entries[pattern] = clone
+		patterns = append(patterns, pattern)
+	}
+
+	return routes, entries, patterns, nil
+}
+
+func clonePathEntry(entry *pathEntry) *pathEntry {
+	if entry == nil {
+		return nil
+	}
+	return &pathEntry{
+		methods: cloneRouteMethods(entry.methods),
+		child:   entry.child,
+	}
+}
+
+func cloneRouteMethods(methods *routeMethods) *routeMethods {
+	if methods == nil {
+		return nil
+	}
+
+	clone := *methods
+	clone.methods = append([]string(nil), methods.methods...)
+	if methods.routes != nil {
+		clone.routes = make(map[string]*route, len(methods.routes))
+		for method, route := range methods.routes {
+			clone.routes[method] = route
+		}
+	}
+	return &clone
 }
 
 func (m *routeMethods) addRoute(reg routeRegistration) error {
@@ -1029,6 +1193,35 @@ func validateUniqueParamNames(pattern string) error {
 	}
 
 	return nil
+}
+
+func patternHasFinalCatchAll(pattern string) bool {
+	finalCatchAll := false
+	for i := 0; i < len(pattern); {
+		switch pattern[i] {
+		case '{':
+			if i+1 < len(pattern) && pattern[i+1] == '{' {
+				i += 2
+				continue
+			}
+			end, err := findPatternParamEnd(pattern, i+1)
+			if err != nil {
+				return false
+			}
+			name := unescapePatternParamName(pattern[i+1 : end])
+			finalCatchAll = len(name) > 1 && name[0] == '*' && end+1 == len(pattern)
+			i = end + 1
+		case '}':
+			if i+1 < len(pattern) && pattern[i+1] == '}' {
+				i += 2
+				continue
+			}
+			return false
+		default:
+			i++
+		}
+	}
+	return finalCatchAll
 }
 
 func findPatternParamEnd(pattern string, start int) (int, error) {
