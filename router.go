@@ -251,7 +251,7 @@ func (r *Router) serveHost(w http.ResponseWriter, req *http.Request, path string
 		return false
 	}
 
-	host := normalizeHost(req.Host)
+	host := normalizeRequestHost(req.Host)
 	if host == "" {
 		return false
 	}
@@ -484,23 +484,63 @@ func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path strin
 	c.router.serve(w, req, path, params, decodeParams)
 }
 
-func normalizeHost(host string) string {
+func normalizeRequestHost(host string) string {
+	return strings.ToLower(normalizeHostAddress(hostWithoutPort(host)))
+}
+
+func normalizeHostPattern(pattern string) string {
+	return lowercasePatternLiterals(normalizeHostAddress(hostWithoutPort(pattern)))
+}
+
+func hostWithoutPort(host string) string {
 	if host == "" {
 		return ""
 	}
 
 	if i := strings.LastIndexByte(host, ':'); i > 0 && strings.IndexByte(host[:i], ':') == -1 {
-		host = host[:i]
-		return strings.ToLower(host)
+		return host[:i]
 	}
 
 	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
+		return h
 	}
+	return host
+}
+
+func normalizeHostAddress(host string) string {
 	if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' && strings.IndexByte(host, ':') != -1 {
 		host = host[1 : len(host)-1]
 	}
-	return strings.ToLower(host)
+	return host
+}
+
+func lowercasePatternLiterals(pattern string) string {
+	var b strings.Builder
+	b.Grow(len(pattern))
+
+	literalStart := 0
+	for i := 0; i < len(pattern); {
+		if pattern[i] == '{' {
+			if i+1 < len(pattern) && pattern[i+1] == '{' {
+				i += 2
+				continue
+			}
+
+			end, err := findPatternParamEnd(pattern, i+1)
+			if err == nil {
+				b.WriteString(strings.ToLower(pattern[literalStart:i]))
+				b.WriteString(pattern[i : end+1])
+				i = end + 1
+				literalStart = i
+				continue
+			}
+		}
+
+		i++
+	}
+	b.WriteString(strings.ToLower(pattern[literalStart:]))
+
+	return b.String()
 }
 
 func requestForHandler(req *http.Request, params match.Params, pattern string, requestPathValues bool) *http.Request {

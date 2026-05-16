@@ -1743,6 +1743,30 @@ func TestHostRouterMatchesAndMergesParams(t *testing.T) {
 	}
 }
 
+func TestHostRouterPreservesParamNameCase(t *testing.T) {
+	r := New()
+	tenant := r.Host("{Tenant}.Example.COM")
+	tenant.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "Tenant"); got != "acme" {
+			t.Fatalf("Param(Tenant) = %q, want %q", got, "acme")
+		}
+		if got := Param(req, "tenant"); got != "" {
+			t.Fatalf("Param(tenant) = %q, want empty", got)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://acme.example.com/", nil)
+	req.Host = "ACME.EXAMPLE.COM"
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusAccepted)
+	}
+}
+
 func TestHostRouterChildRouteEnablesEscapedSlashMatching(t *testing.T) {
 	r := New()
 	api := r.Host("api.example.com")

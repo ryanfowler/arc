@@ -37,7 +37,7 @@ func (r *Router) Host(pattern string) *Router {
 // pattern, and host conflicts reported by match.
 func (r *Router) HostErr(pattern string) (*Router, error) {
 	child := newChildRouter(r)
-	matchPattern := normalizeHost(pattern)
+	matchPattern := normalizeHostPattern(pattern)
 	if err := validateUniqueParamNames(matchPattern); err != nil {
 		return nil, err
 	}
