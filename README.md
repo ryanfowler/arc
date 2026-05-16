@@ -320,8 +320,9 @@ if err != nil {
 }
 ```
 
-Errors come from `github.com/ryanfowler/match`, including invalid parameter
-syntax and `*match.ConflictError`.
+Most errors come from `github.com/ryanfowler/match`, including invalid
+parameter syntax and `*match.ConflictError`. Patterns that capture the same
+parameter name more than once return `arc.ErrDuplicateParamName`.
 
 ## Configure Before Creating Children
 

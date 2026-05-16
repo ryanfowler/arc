@@ -23,8 +23,9 @@ func (r *Router) Handle(pattern string, h http.Handler) {
 // returns registration errors.
 //
 // The pattern uses the github.com/ryanfowler/match route grammar. Registration
-// errors include invalid parameter syntax and route conflicts reported by
-// match. A nil handler is treated as http.NotFoundHandler.
+// errors include invalid parameter syntax, duplicate parameter names within the
+// pattern, and route conflicts reported by match. A nil handler is treated as
+// http.NotFoundHandler.
 func (r *Router) HandleErr(pattern string, h http.Handler) error {
 	return r.handleErr("", pattern, h, true)
 }
@@ -47,8 +48,9 @@ func (r *Router) HandleMethod(method, pattern string, h http.Handler) {
 // registration errors.
 //
 // The pattern uses the github.com/ryanfowler/match route grammar. Registration
-// errors include invalid parameter syntax and route conflicts reported by
-// match. A nil handler is treated as http.NotFoundHandler.
+// errors include invalid parameter syntax, duplicate parameter names within the
+// pattern, and route conflicts reported by match. A nil handler is treated as
+// http.NotFoundHandler.
 func (r *Router) HandleMethodErr(method, pattern string, h http.Handler) error {
 	return r.handleErr(method, pattern, h, false)
 }

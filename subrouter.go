@@ -39,13 +39,17 @@ func (r *Router) SubRouter(pattern string) *Router {
 // returns registration errors.
 //
 // The pattern uses the github.com/ryanfowler/match route grammar. Registration
-// errors include invalid parameter syntax and mount conflicts reported by
-// match.
+// errors include invalid parameter syntax, duplicate parameter names within the
+// pattern, and mount conflicts reported by match.
 func (r *Router) SubRouterErr(pattern string) (*Router, error) {
 	child := newChildRouter(r)
 	pattern = cleanMountPattern(pattern)
+	matchPattern := normalizeEscapedSlashPattern(pattern)
 
-	if err := r.subMounts.TryInsert(normalizeEscapedSlashPattern(pattern), child); err != nil {
+	if err := validateUniqueParamNames(matchPattern); err != nil {
+		return nil, err
+	}
+	if err := r.subMounts.TryInsert(matchPattern, child); err != nil {
 		return nil, err
 	}
 
@@ -78,8 +82,9 @@ func (r *Router) Mount(pattern string, h http.Handler) {
 // MountErr registers h below pattern and returns registration errors.
 //
 // The pattern uses the github.com/ryanfowler/match route grammar. Registration
-// errors include invalid parameter syntax and mount conflicts reported by
-// match. A nil handler is treated as http.NotFoundHandler.
+// errors include invalid parameter syntax, duplicate parameter names within the
+// pattern, and mount conflicts reported by match. A nil handler is treated as
+// http.NotFoundHandler.
 func (r *Router) MountErr(pattern string, h http.Handler) error {
 	if h == nil {
 		h = http.NotFoundHandler()
@@ -92,7 +97,11 @@ func (r *Router) MountErr(pattern string, h http.Handler) error {
 		mounted: true,
 		pattern: joinPatterns(r.patternPrefix, pattern),
 	}
-	if err := r.subMounts.TryInsert(normalizeEscapedSlashPattern(pattern), child); err != nil {
+	matchPattern := normalizeEscapedSlashPattern(pattern)
+	if err := validateUniqueParamNames(matchPattern); err != nil {
+		return err
+	}
+	if err := r.subMounts.TryInsert(matchPattern, child); err != nil {
 		return err
 	}
 

@@ -665,6 +665,59 @@ func TestHandleErrReturnsMatchErrors(t *testing.T) {
 	}
 }
 
+func TestRegistrationRejectsDuplicateParamNames(t *testing.T) {
+	handler := writeStatus(http.StatusNoContent)
+	tests := []struct {
+		name     string
+		register func(*Router) error
+	}{
+		{
+			name: "route",
+			register: func(r *Router) error {
+				return r.HandleErr("/{id}/{id}", handler)
+			},
+		},
+		{
+			name: "route catch-all",
+			register: func(r *Router) error {
+				return r.HandleErr("/{id}/{*id}", handler)
+			},
+		},
+		{
+			name: "subrouter",
+			register: func(r *Router) error {
+				_, err := r.SubRouterErr("/{id}/{id}")
+				return err
+			},
+		},
+		{
+			name: "mount",
+			register: func(r *Router) error {
+				return r.MountErr("/{id}/{id}", handler)
+			},
+		},
+		{
+			name: "host",
+			register: func(r *Router) error {
+				_, err := r.HostErr("{id}/{id}.example.com")
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.register(New())
+			if !errors.Is(err, ErrDuplicateParamName) {
+				t.Fatalf("registration error = %v, want ErrDuplicateParamName", err)
+			}
+			if !errors.Is(err, match.ErrInvalidParam) {
+				t.Fatalf("registration error = %v, want ErrInvalidParam", err)
+			}
+		})
+	}
+}
+
 func TestHandleMethodErrDoesNotPartiallyRegisterFailedRoute(t *testing.T) {
 	r := New()
 	if err := r.HandleMethodErr(http.MethodGet, "/users/{id}", writeStatus(http.StatusNoContent)); err != nil {
