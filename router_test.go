@@ -667,6 +667,61 @@ func TestHandleErrReturnsMatchErrors(t *testing.T) {
 	}
 }
 
+func TestPathRegistrationsRejectNonAbsolutePatterns(t *testing.T) {
+	handler := writeStatus(http.StatusNoContent)
+	tests := []struct {
+		name     string
+		register func(*Router) error
+	}{
+		{
+			name: "route relative",
+			register: func(r *Router) error {
+				return r.HandleErr("users/{id}", handler)
+			},
+		},
+		{
+			name: "route empty",
+			register: func(r *Router) error {
+				return r.HandleErr("", handler)
+			},
+		},
+		{
+			name: "method route relative",
+			register: func(r *Router) error {
+				return r.HandleMethodErr(http.MethodGet, "users/{id}", handler)
+			},
+		},
+		{
+			name: "subrouter relative",
+			register: func(r *Router) error {
+				_, err := r.SubRouterErr("api")
+				return err
+			},
+		},
+		{
+			name: "mount relative",
+			register: func(r *Router) error {
+				return r.MountErr("assets", handler)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := New()
+			if err := tt.register(r); !errors.Is(err, ErrInvalidPathPattern) {
+				t.Fatalf("registration error = %v, want ErrInvalidPathPattern", err)
+			}
+			if r.hasRoutes {
+				t.Fatal("router hasRoutes = true after failed registration, want false")
+			}
+			if r.hasSubRouters {
+				t.Fatal("router hasSubRouters = true after failed registration, want false")
+			}
+		})
+	}
+}
+
 func TestRegistrationRejectsDuplicateParamNames(t *testing.T) {
 	handler := writeStatus(http.StatusNoContent)
 	tests := []struct {

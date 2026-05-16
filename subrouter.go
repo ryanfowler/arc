@@ -45,12 +45,16 @@ func (r *Router) SubRouter(pattern string) *Router {
 // SubRouterErr registers and returns a child router mounted at pattern and
 // returns registration errors.
 //
-// The pattern uses the github.com/ryanfowler/match route grammar. Registration
-// errors include invalid parameter syntax, duplicate parameter names within the
+// The pattern uses the github.com/ryanfowler/match route grammar. An empty
+// pattern is treated as /. Registration errors include non-absolute path
+// patterns, invalid parameter syntax, duplicate parameter names within the
 // pattern, and mount conflicts reported by match.
 func (r *Router) SubRouterErr(pattern string) (*Router, error) {
 	child := newChildRouter(r)
 	pattern = cleanMountPattern(pattern)
+	if err := validateHTTPPathPattern(pattern); err != nil {
+		return nil, err
+	}
 	matchPattern := normalizeEscapedSlashPattern(pattern)
 
 	if err := validateUniqueParamNames(matchPattern); err != nil {
@@ -93,8 +97,9 @@ func (r *Router) Mount(pattern string, h http.Handler) {
 
 // MountErr registers h below pattern and returns registration errors.
 //
-// The pattern uses the github.com/ryanfowler/match route grammar. Registration
-// errors include invalid parameter syntax, duplicate parameter names within the
+// The pattern uses the github.com/ryanfowler/match route grammar. An empty
+// pattern is treated as /. Registration errors include non-absolute path
+// patterns, invalid parameter syntax, duplicate parameter names within the
 // pattern, and mount conflicts reported by match. A nil handler is treated as
 // http.NotFoundHandler.
 func (r *Router) MountErr(pattern string, h http.Handler) error {
@@ -103,6 +108,9 @@ func (r *Router) MountErr(pattern string, h http.Handler) error {
 	}
 
 	pattern = cleanMountPattern(pattern)
+	if err := validateHTTPPathPattern(pattern); err != nil {
+		return err
+	}
 	child := &childRouter{
 		router:  r,
 		handler: compose(mountedHandler{handler: h}, r.middleware),

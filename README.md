@@ -339,9 +339,11 @@ if err != nil {
 }
 ```
 
-Most errors come from `github.com/ryanfowler/match`, including invalid
-parameter syntax and `*match.ConflictError`. Patterns that capture the same
-parameter name more than once return `arc.ErrDuplicateParamName`.
+Route, subrouter, and mount path patterns must begin with `/`; non-absolute
+path patterns return `arc.ErrInvalidPathPattern`. Most other errors come from
+`github.com/ryanfowler/match`, including invalid parameter syntax and
+`*match.ConflictError`. Patterns that capture the same parameter name more than
+once return `arc.ErrDuplicateParamName`.
 
 ## Configure Before Creating Children
 
