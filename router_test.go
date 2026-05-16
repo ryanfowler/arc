@@ -782,6 +782,36 @@ func TestNilHandlerUsesNotFoundHandler(t *testing.T) {
 	assertStatus(t, rec, http.StatusNotFound)
 }
 
+func TestNilHandlerFuncUsesNotFoundHandler(t *testing.T) {
+	r := New()
+	r.HandleFunc("/nil", nil)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/nil", nil))
+
+	assertStatus(t, rec, http.StatusNotFound)
+}
+
+func TestNilHandleMethodFuncUsesNotFoundHandler(t *testing.T) {
+	r := New()
+	r.HandleMethodFunc(http.MethodPost, "/nil", nil)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/nil", nil))
+
+	assertStatus(t, rec, http.StatusNotFound)
+}
+
+func TestNilMethodHelperUsesNotFoundHandler(t *testing.T) {
+	r := New()
+	r.Get("/nil", nil)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/nil", nil))
+
+	assertStatus(t, rec, http.StatusNotFound)
+}
+
 func TestMiddlewareOrder(t *testing.T) {
 	var calls []string
 	r := New()
