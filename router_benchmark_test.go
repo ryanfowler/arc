@@ -54,6 +54,42 @@ func BenchmarkRouterHandle(b *testing.B) {
 	}
 }
 
+func BenchmarkValidateUniqueParamNames(b *testing.B) {
+	benchmarks := []struct {
+		name    string
+		pattern string
+	}{
+		{
+			name:    "static",
+			pattern: "/healthz",
+		},
+		{
+			name:    "one_param",
+			pattern: "/users/{id}",
+		},
+		{
+			name:    "four_params",
+			pattern: "/{tenant}/{version}/{resource}/{id}",
+		},
+		{
+			name:    "five_params",
+			pattern: "/{tenant}/{version}/{resource}/{id}/{slug}",
+		},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			b.ReportAllocs()
+
+			for i := 0; i < b.N; i++ {
+				if err := validateUniqueParamNames(bm.pattern); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkRouterServeHTTP(b *testing.B) {
 	benchmarks := []struct {
 		name string

@@ -684,6 +684,12 @@ func TestRegistrationRejectsDuplicateParamNames(t *testing.T) {
 			},
 		},
 		{
+			name: "route many params",
+			register: func(r *Router) error {
+				return r.HandleErr("/{a}/{b}/{c}/{d}/{e}/{a}", handler)
+			},
+		},
+		{
 			name: "subrouter",
 			register: func(r *Router) error {
 				_, err := r.SubRouterErr("/{id}/{id}")
