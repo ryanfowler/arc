@@ -692,11 +692,7 @@ func dispatchState(req *http.Request) (string, match.Params, bool) {
 }
 
 func escapedSlashMatchPath(req *http.Request) (string, bool) {
-	path := req.URL.EscapedPath()
-	if !hasEscapedSlash(path) {
-		return req.URL.Path, false
-	}
-	return decodeEscapedSlashPath(path), true
+	return markEscapedSlashes(req.URL.Path, req.URL.EscapedPath())
 }
 
 func hasEscapedSlash(path string) bool {
@@ -708,37 +704,59 @@ func hasEscapedSlash(path string) bool {
 	return false
 }
 
-func decodeEscapedSlashPath(path string) string {
+func markEscapedSlashes(decoded, escaped string) (string, bool) {
 	var b strings.Builder
-	b.Grow(len(path))
-	for i := 0; i < len(path); {
-		if path[i] != '%' || i+2 >= len(path) {
-			if path[i] == escapedSlashMarker {
-				b.WriteByte(escapedSlashMarker)
-				b.WriteByte(escapedSlashMarker)
-			} else {
-				b.WriteByte(path[i])
-			}
-			i++
-			continue
-		}
-		hi, ok := fromHex(path[i+1])
-		if !ok {
-			b.WriteByte(path[i])
-			i++
-			continue
-		}
-		lo, ok := fromHex(path[i+2])
-		if !ok {
-			b.WriteByte(path[i])
+	decodedStart := 0
+	decodedIndex := 0
+	marked := false
+	escapeMarkers := false
+
+	for i := 0; i < len(escaped); {
+		if escaped[i] != '%' || i+2 >= len(escaped) {
+			decodedIndex++
 			i++
 			continue
 		}
 
-		writeMatchByte(&b, hi<<4|lo)
+		if escaped[i+1] == '0' && escaped[i+2] == '0' {
+			escapeMarkers = true
+		}
+		if escaped[i+1] == '2' && (escaped[i+2] == 'f' || escaped[i+2] == 'F') {
+			if !marked {
+				b.Grow(len(decoded) + 1)
+				marked = true
+			}
+			writeDecodedMatchChunk(&b, decoded[decodedStart:decodedIndex], escapeMarkers)
+			b.WriteByte(escapedSlashMarker)
+			b.WriteByte(escapedSlashCode)
+			decodedIndex++
+			decodedStart = decodedIndex
+		} else {
+			decodedIndex++
+		}
 		i += 3
 	}
-	return b.String()
+
+	if !marked {
+		return decoded, false
+	}
+	writeDecodedMatchChunk(&b, decoded[decodedStart:], escapeMarkers)
+	return b.String(), true
+}
+
+func writeDecodedMatchChunk(b *strings.Builder, s string, escapeMarkers bool) {
+	if !escapeMarkers {
+		b.WriteString(s)
+		return
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] == escapedSlashMarker {
+			b.WriteByte(escapedSlashMarker)
+			b.WriteByte(escapedSlashMarker)
+		} else {
+			b.WriteByte(s[i])
+		}
+	}
 }
 
 func normalizeEscapedSlashPattern(pattern string) string {
