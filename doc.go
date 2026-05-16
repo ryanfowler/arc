@@ -22,10 +22,11 @@
 // validation, or other framework features.
 //
 // Route, subrouter, mount, and host patterns use the
-// github.com/ryanfowler/match grammar. In paths, {name} captures one non-empty
-// segment and {*name} captures the non-empty remainder of the path. Captured
-// parameters are stored on the request and can be read with Params or Param.
-// Use Router.SetRequestPathValues to also expose them through
+// github.com/ryanfowler/match grammar. Route, subrouter, and mount path
+// patterns must be absolute paths beginning with /. In paths, {name} captures
+// one non-empty segment and {*name} captures the non-empty remainder of the
+// path. Captured parameters are stored on the request and can be read with
+// Params or Param. Use Router.SetRequestPathValues to also expose them through
 // http.Request.PathValue.
 //
 // Use SubRouter to group a section of an application behind a shared path

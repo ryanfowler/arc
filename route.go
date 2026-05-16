@@ -27,9 +27,9 @@ func (r *Router) Handle(pattern string, h http.Handler) {
 // returns registration errors.
 //
 // The pattern uses the github.com/ryanfowler/match route grammar. Registration
-// errors include invalid parameter syntax, duplicate parameter names within the
-// pattern, and route conflicts reported by match. A nil handler is treated as
-// http.NotFoundHandler.
+// errors include non-absolute path patterns, invalid parameter syntax,
+// duplicate parameter names within the pattern, and route conflicts reported by
+// match. A nil handler is treated as http.NotFoundHandler.
 //
 // Routes, subrouters, and mounted handlers share one path matcher on the same
 // router. The most specific path wins, so a direct route below a mounted prefix
@@ -56,14 +56,18 @@ func (r *Router) HandleMethod(method, pattern string, h http.Handler) {
 // registration errors.
 //
 // The pattern uses the github.com/ryanfowler/match route grammar. Registration
-// errors include invalid parameter syntax, duplicate parameter names within the
-// pattern, and route conflicts reported by match. A nil handler is treated as
-// http.NotFoundHandler.
+// errors include non-absolute path patterns, invalid parameter syntax,
+// duplicate parameter names within the pattern, and route conflicts reported by
+// match. A nil handler is treated as http.NotFoundHandler.
 func (r *Router) HandleMethodErr(method, pattern string, h http.Handler) error {
 	return r.handleErr(method, pattern, h, false)
 }
 
 func (r *Router) handleErr(method, pattern string, h http.Handler, anyMethod bool) error {
+	if err := validateHTTPPathPattern(pattern); err != nil {
+		return err
+	}
+
 	if h == nil {
 		h = http.NotFoundHandler()
 	}

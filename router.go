@@ -2,6 +2,7 @@ package arc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -19,6 +20,10 @@ const (
 // ErrDuplicateParamName reports a single registered pattern that captures the
 // same parameter name more than once.
 var ErrDuplicateParamName = fmt.Errorf("%w: duplicate parameter names are not allowed within one pattern", match.ErrInvalidParam)
+
+// ErrInvalidPathPattern reports a route, subrouter, or mount path pattern that
+// is not an absolute HTTP path.
+var ErrInvalidPathPattern = errors.New("path patterns must begin with /")
 
 // Middleware wraps an HTTP handler on a Router.
 //
@@ -1192,6 +1197,13 @@ func validateUniqueParamNames(pattern string) error {
 		}
 	}
 
+	return nil
+}
+
+func validateHTTPPathPattern(pattern string) error {
+	if pattern == "" || pattern[0] != '/' {
+		return ErrInvalidPathPattern
+	}
 	return nil
 }
 
