@@ -96,6 +96,56 @@ func TestRouterMatchesEscapedSlashWithinSegment(t *testing.T) {
 	})
 }
 
+func TestRouterMatchesEscapedSlashWithDecodedStaticSegments(t *testing.T) {
+	t.Run("decoded space segment", func(t *testing.T) {
+		r := New()
+		r.Get("/files/{name}/meta data", func(w http.ResponseWriter, req *http.Request) {
+			if got := Param(req, "name"); got != "a/b" {
+				t.Fatalf("Param(name) = %q, want %q", got, "a/b")
+			}
+			w.WriteHeader(http.StatusAccepted)
+		})
+
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/files/a%2Fb/meta%20data", nil))
+
+		assertStatus(t, rec, http.StatusAccepted)
+	})
+
+	t.Run("decoded literal braces segment", func(t *testing.T) {
+		r := New()
+		r.Get("/files/{name}/{{meta}}", func(w http.ResponseWriter, req *http.Request) {
+			if got := Param(req, "name"); got != "a/b" {
+				t.Fatalf("Param(name) = %q, want %q", got, "a/b")
+			}
+			w.WriteHeader(http.StatusAccepted)
+		})
+
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/files/a%2Fb/%7Bmeta%7D", nil))
+
+		assertStatus(t, rec, http.StatusAccepted)
+	})
+
+	t.Run("literal nul stays distinct from escaped slash", func(t *testing.T) {
+		r := New()
+		r.Get("/files/{name}/{slug}", func(w http.ResponseWriter, req *http.Request) {
+			if got := Param(req, "name"); got != "a\x00b" {
+				t.Fatalf("Param(name) = %q, want %q", got, "a\x00b")
+			}
+			if got := Param(req, "slug"); got != "c/d" {
+				t.Fatalf("Param(slug) = %q, want %q", got, "c/d")
+			}
+			w.WriteHeader(http.StatusAccepted)
+		})
+
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/files/a%00b/c%2Fd", nil))
+
+		assertStatus(t, rec, http.StatusAccepted)
+	})
+}
+
 func TestRouterMatchesStaticEscapedSlashWithinSegment(t *testing.T) {
 	r := New()
 	r.Get("/files/a%2Fb", writeStatus(http.StatusAccepted))
@@ -113,6 +163,37 @@ func TestRouterMatchesStaticEscapedSlashWithinSegment(t *testing.T) {
 
 		assertStatus(t, rec, http.StatusNotFound)
 	})
+}
+
+func TestRouterNormalizesEscapedSlashStaticPatterns(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		path    string
+	}{
+		{
+			name:    "decoded space segment",
+			pattern: "/files/a%2Fb/meta%20data",
+			path:    "/files/a%2Fb/meta%20data",
+		},
+		{
+			name:    "decoded literal braces segment",
+			pattern: "/files/a%2Fb/%7Bmeta%7D",
+			path:    "/files/a%2Fb/%7Bmeta%7D",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := New()
+			r.Get(tt.pattern, writeStatus(http.StatusAccepted))
+
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+
+			assertStatus(t, rec, http.StatusAccepted)
+		})
+	}
 }
 
 func TestRouterDoesNotMatchStaticRouteWithEscapedSlash(t *testing.T) {
@@ -1152,6 +1233,33 @@ func TestSubRouterMatchesEscapedSlashWithinSegment(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestSubRouterMatchesEscapedSlashWithDecodedStaticSegment(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api/{version}")
+	api.Get("/meta data", func(w http.ResponseWriter, req *http.Request) {
+		if got := Param(req, "version"); got != "v1/beta" {
+			t.Fatalf("Param(version) = %q, want %q", got, "v1/beta")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1%2Fbeta/meta%20data", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestSubRouterNormalizesEscapedSlashStaticPattern(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api/v1%2Fbeta")
+	api.Get("/meta data", writeStatus(http.StatusAccepted))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1%2Fbeta/meta%20data", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestSubRouterChildRouteEnablesEscapedSlashMatching(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api")
@@ -1362,6 +1470,21 @@ func TestMountMatchesEscapedSlashWithinSegment(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/a%2Fb/app.css", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestMountNormalizesEscapedSlashStaticPattern(t *testing.T) {
+	r := New()
+	r.Mount("/assets/a%2Fb", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if got := req.URL.Path; got != "/meta data" {
+			t.Fatalf("req.URL.Path = %q, want %q", got, "/meta data")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/a%2Fb/meta%20data", nil))
 
 	assertStatus(t, rec, http.StatusAccepted)
 }

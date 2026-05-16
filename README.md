@@ -350,8 +350,8 @@ router that owns the fallback.
 `arc` normally matches `req.URL.Path`, as parsed by `net/http`.
 
 When `req.URL.RawPath` preserves an escaped slash (`%2F` or `%2f`), `arc`
-matches `req.URL.EscapedPath()` so the escaped slash stays inside its path
-segment. Captured parameters are unescaped before your handlers read them.
+matches an internal decoded path where the escaped slash stays inside its path
+segment. Captured parameters are restored before your handlers read them.
 
 For example, `/files/a%2Fb` matches `/files/{id}` and captures `a/b`, but it
 does not match the static route `/files/a/b`.

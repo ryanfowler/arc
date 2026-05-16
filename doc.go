@@ -33,8 +33,8 @@
 // dispatch different domains or subdomains to different routers.
 //
 // Arc normally matches paths using req.URL.Path as parsed by net/http. When
-// req.URL.RawPath preserves an escaped slash, Arc matches req.URL.EscapedPath()
-// so the escaped slash stays inside its segment, then decodes captured
+// req.URL.RawPath preserves an escaped slash, Arc matches an internal decoded
+// path where the escaped slash stays inside its segment, then restores captured
 // parameters before exposing them. It does not perform net/http.ServeMux path
 // cleaning redirects for dot segments or repeated slashes. GET routes handle
 // HEAD requests by default when no explicit HEAD or any-method route matches;
