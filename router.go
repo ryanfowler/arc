@@ -789,6 +789,7 @@ const (
 	requestParamsKey requestContextKey = iota
 	requestDispatchKey
 	requestDecodeParamsKey
+	requestStateKey
 )
 
 type requestMatchFlag uint8
@@ -816,6 +817,23 @@ func requestWithMatchState(req *http.Request, state requestMatchState) *http.Req
 			req.Pattern = state.pattern
 		}
 		return req
+	}
+
+	if !state.requestPathValues && !requestHasArcState(req.Context()) {
+		next := requestWithState(req, requestState{
+			params:       state.params,
+			path:         state.dispatchPath,
+			decodeParams: state.decodeParams,
+			flags: requestStateFlags(
+				state.params.Len() != 0,
+				state.flags&requestMatchDispatchPath != 0,
+				state.decodeParams,
+			),
+		})
+		if state.flags&requestMatchPattern != 0 {
+			next.Pattern = state.pattern
+		}
+		return next
 	}
 
 	paramsMatch := paramsEqual(Params(req), state.params)
@@ -890,6 +908,8 @@ func (ctx *requestStateContext) Value(key any) any {
 		if ctx.flags&requestStateDecodeParams != 0 {
 			return ctx.decodeParams
 		}
+	case requestStateKey:
+		return true
 	}
 	return ctx.Context.Value(key)
 }
@@ -1390,6 +1410,11 @@ func dispatchPath(req *http.Request) (string, bool) {
 func dispatchDecodeParams(req *http.Request) bool {
 	decode, _ := decodeParamsFromContext(req.Context())
 	return decode
+}
+
+func requestHasArcState(ctx context.Context) bool {
+	hasState, _ := ctx.Value(requestStateKey).(bool)
+	return hasState
 }
 
 // Params returns the parameters captured while matching req.
