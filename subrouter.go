@@ -19,6 +19,12 @@ import (
 // URL is not rewritten; middleware and handlers still see the original
 // req.URL.Path.
 //
+// Subrouters are matched before routes registered directly on the parent. Once
+// a subrouter matches its prefix, the child owns the request, including child
+// not-found and method-not-allowed handling. Register routes such as
+// /api/healthz on the child as /healthz; a parent route at /api/healthz is
+// shadowed by the /api subrouter.
+//
 // Middleware already registered on the parent wraps the child router. Middleware
 // added to the child applies only inside the child router, including child
 // fallback handlers. The child copies the parent's current strict slash,
@@ -70,6 +76,11 @@ func (r *Router) SubRouterErr(pattern string) (*Router, error) {
 // a request to /assets/app.css, while both /assets and /assets/ are dispatched
 // as /. Middleware already registered on the parent sees the original request
 // path and wraps the mounted handler.
+//
+// Mounted handlers are matched before routes registered directly on the parent.
+// Once a mount matches its prefix, the mounted handler owns the request. A
+// parent route below the mounted prefix, such as /assets/healthz, is shadowed by
+// the mount.
 //
 // Invalid, duplicate, or ambiguous mount patterns panic with the error returned
 // by match. Use MountErr to receive the registration error instead.

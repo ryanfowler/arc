@@ -210,6 +210,12 @@ func (r *Router) Use(mw ...Middleware) {
 // ServeHTTP dispatches req to the best matching host router, subrouter, mounted
 // handler, or route.
 //
+// Dispatch checks host routers first, then subrouters and mounted handlers, and
+// then routes registered directly on this router. When a subrouter or mounted
+// handler matches a prefix, it owns the request, including not-found and
+// method-not-allowed handling; routes on the parent below the same prefix are
+// not considered.
+//
 // Route and subrouter matching uses req.URL.Path unless req.URL.RawPath
 // preserves an escaped slash. In that case, Arc matches an internal decoded
 // path where the escaped slash stays inside its segment and restores captured
