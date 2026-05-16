@@ -29,6 +29,16 @@
 // Params or Param. Use Router.SetRequestPathValues to also expose them through
 // http.Request.PathValue.
 //
+// Arc also sets http.Request.Pattern for matched routes, mounted handlers, and
+// method-not-allowed fallbacks. The value is the full path pattern, including
+// subrouter or mount prefixes, but it does not include a matched host pattern.
+// Middleware can read Request.Pattern after Arc has selected the route, mount,
+// or method-not-allowed fallback it wraps. Parent middleware that wraps a host
+// router or subrouter runs before the child router's final path match and
+// should not depend on the child's final pattern. Not-found fallback handlers
+// receive an empty Request.Pattern, even when host or subrouter parameters were
+// captured.
+//
 // Use SubRouter to group a section of an application behind a shared path
 // prefix, Mount to attach an existing http.Handler below a path, and Host to
 // dispatch different domains or subdomains to different routers.

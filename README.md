@@ -164,6 +164,36 @@ wins:
 host params < subrouter params < route params
 ```
 
+## Read the Matched Pattern
+
+`arc` sets `req.Pattern` before calling a matched route, mounted handler, or
+method-not-allowed fallback. The value is the full path pattern registered with
+the router, including subrouter or mount prefixes:
+
+```go
+r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+	log.Print(req.Pattern) // "/users/{id}"
+})
+```
+
+Host patterns are not included in `req.Pattern`; a route registered under
+`r.Host("{tenant}.example.com").SubRouter("/api")` still receives a path-only
+pattern such as `/api/users/{id}`. Host captures remain available through
+`arc.Param`, `arc.Params`, and `req.PathValue` when request path values are
+enabled.
+
+Middleware can read `req.Pattern` once the router has selected the route,
+mount, or method-not-allowed fallback it wraps. That includes route middleware,
+mounted-handler middleware, child-router middleware for matched child routes,
+and method-not-allowed middleware. Middleware already registered on a parent
+router before creating a host router or subrouter runs before the child performs
+its final route match, so it should not depend on seeing the child's final
+pattern.
+
+Router not-found fallback handlers receive an empty `req.Pattern`, even when a
+host or subrouter prefix matched and contributed parameters. This also clears a
+pattern left on a request before it entered `arc`.
+
 ## Add Middleware
 
 Middleware in `arc` is the same shape used throughout `net/http`: a function
