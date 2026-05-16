@@ -18,8 +18,8 @@ import "github.com/ryanfowler/match"
 // Middleware already registered on the parent wraps the host router.
 // Middleware added to the returned router applies only inside that host router,
 // including host-router fallback handlers. The returned router copies the
-// parent's current strict slash, implicit HEAD, request path value, and
-// fallback handler settings when it is created.
+// parent's current strict slash, implicit HEAD, and fallback handler settings
+// when it is created.
 //
 // Invalid, duplicate, or ambiguous host patterns panic with the error returned
 // by match. Use HostErr to receive the registration error instead.

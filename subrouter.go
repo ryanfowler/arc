@@ -2,6 +2,7 @@ package arc
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 )
 
@@ -29,8 +30,7 @@ import (
 // Middleware already registered on the parent wraps the child router. Middleware
 // added to the child applies only inside the child router, including child
 // fallback handlers. The child copies the parent's current strict slash,
-// implicit HEAD, request path value, and fallback handler settings when it is
-// created.
+// implicit HEAD, and fallback handler settings when it is created.
 //
 // Invalid, duplicate, or ambiguous mount patterns panic with the error returned
 // by match. Use SubRouterErr to receive the registration error instead.
@@ -112,10 +112,11 @@ func (r *Router) MountErr(pattern string, h http.Handler) error {
 		return err
 	}
 	child := &childRouter{
-		router:  r,
-		handler: compose(mountedHandler{handler: h}, r.middleware),
-		mounted: true,
-		pattern: joinPatterns(r.patternPrefix, pattern),
+		router:     r,
+		handler:    h,
+		middleware: slices.Clone(r.middleware),
+		mounted:    true,
+		pattern:    joinPatterns(r.patternPrefix, pattern),
 	}
 	matchPattern := normalizeEscapedSlashPattern(pattern)
 	if err := validateUniqueParamNames(matchPattern); err != nil {
@@ -127,18 +128,6 @@ func (r *Router) MountErr(pattern string, h http.Handler) error {
 
 	r.hasSubRouters = true
 	return nil
-}
-
-type mountedHandler struct {
-	handler http.Handler
-}
-
-func (h mountedHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	path, decodeParams := dispatchPathState(req)
-	if decodeParams {
-		path = decodedMatchPath(path)
-	}
-	h.handler.ServeHTTP(w, requestWithURLPath(req, path))
 }
 
 func cleanMountPattern(pattern string) string {

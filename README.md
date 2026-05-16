@@ -44,7 +44,7 @@ func main() {
 	})
 
 	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		id := arc.Param(req, "id")
+		id := req.PathValue("id")
 		fmt.Fprintf(w, "user %s\n", id)
 	})
 
@@ -125,37 +125,15 @@ r.Get("/users/{id}", getUser) // HEAD /users/42 returns 405
 
 ## Read Request Parameters
 
-Use `arc.Param` when you need one parameter:
+Use `http.Request.PathValue` to read captured route, subrouter, mount, and host
+parameters:
 
 ```go
 r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-	id := arc.Param(req, "id")
+	id := req.PathValue("id")
 	fmt.Fprintln(w, id)
 })
 ```
-
-Use `arc.Params` when you need the full parameter set:
-
-```go
-params := arc.Params(req)
-id, ok := params.TryGet("id")
-```
-
-`arc.Params(req)` returns `arc.RequestParams`, an alias of `match.Params`, so
-the `match.Params` methods are available directly: `Len`, `At`, `Get`,
-`TryGet`, `Seq`, `AppendTo`, and `All`.
-
-By default, parameters are available through `arc.Param` and `arc.Params` only.
-If your handlers or middleware expect standard library path values, enable that
-compatibility option during startup. Do it before creating subrouters or host
-routers that should inherit the setting:
-
-```go
-r := arc.New()
-r.SetRequestPathValues(true)
-```
-
-Then `req.PathValue("id")` returns the same value as `arc.Param(req, "id")`.
 
 When the same name is captured at multiple levels, the most specific match
 wins:
@@ -179,8 +157,7 @@ r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
 Host patterns are not included in `req.Pattern`; a route registered under
 `r.Host("{tenant}.example.com").SubRouter("/api")` still receives a path-only
 pattern such as `/api/users/{id}`. Host captures remain available through
-`arc.Param`, `arc.Params`, and `req.PathValue` when request path values are
-enabled.
+`req.PathValue`.
 
 Middleware can read `req.Pattern` once the router has selected the route,
 mount, or method-not-allowed fallback it wraps. That includes route middleware,
@@ -241,8 +218,8 @@ api := r.SubRouter("/api/{version}")
 api.Use(requireAuth)
 
 api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-	version := arc.Param(req, "version")
-	id := arc.Param(req, "id")
+	version := req.PathValue("version")
+	id := req.PathValue("id")
 	fmt.Fprintf(w, "%s user %s\n", version, id)
 })
 ```
@@ -283,8 +260,7 @@ Mounted handlers receive the remaining path as `req.URL.Path`. For example, a
 handler mounted at `/assets` receives `/app.css` for `/assets/app.css`, while
 both `/assets` and `/assets/` are dispatched as `/`.
 
-Mount parameters are available with `arc.Param`, and with `req.PathValue` when
-request path values are enabled.
+Mount parameters are available with `req.PathValue`.
 
 Mounts and direct parent routes also share one path matcher. The most specific
 path wins, so a parent route below the mounted prefix handles that exact path.
@@ -302,7 +278,7 @@ api.Get("/users/{id}", getUser)
 
 tenant := r.Host("{tenant}.example.com")
 tenant.Get("/", func(w http.ResponseWriter, req *http.Request) {
-	fmt.Fprintf(w, "tenant %s\n", arc.Param(req, "tenant"))
+	fmt.Fprintf(w, "tenant %s\n", req.PathValue("tenant"))
 })
 ```
 
@@ -384,7 +360,6 @@ are created. Configure shared behavior first:
 r := arc.New()
 r.SetStrictSlash(false)
 r.SetImplicitHead(false)
-r.SetRequestPathValues(true)
 r.SetNotFound(http.HandlerFunc(notFound))
 r.SetMethodNotAllowed(http.HandlerFunc(methodNotAllowed))
 

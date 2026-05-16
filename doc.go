@@ -8,7 +8,7 @@
 //	r := arc.New()
 //
 //	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-//		id := arc.Param(req, "id")
+//		id := req.PathValue("id")
 //		fmt.Fprintln(w, id)
 //	})
 //
@@ -26,7 +26,6 @@
 // patterns must be absolute paths beginning with /. In paths, {name} captures
 // one non-empty segment and {*name} captures the non-empty remainder of the
 // path. Captured parameters are stored on the request and can be read with
-// Params or Param. Use Router.SetRequestPathValues to also expose them through
 // http.Request.PathValue.
 //
 // Arc also sets http.Request.Pattern for matched routes, mounted handlers, and
