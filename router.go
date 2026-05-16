@@ -789,6 +789,7 @@ const (
 	requestParamsKey requestContextKey = iota
 	requestDispatchKey
 	requestDecodeParamsKey
+	requestStateKey
 )
 
 type requestMatchFlag uint8
@@ -816,6 +817,23 @@ func requestWithMatchState(req *http.Request, state requestMatchState) *http.Req
 			req.Pattern = state.pattern
 		}
 		return req
+	}
+
+	if !state.requestPathValues && !requestHasArcState(req.Context()) {
+		next := requestWithState(req, requestState{
+			params:       state.params,
+			path:         state.dispatchPath,
+			decodeParams: state.decodeParams,
+			flags: requestStateFlags(
+				state.params.Len() != 0,
+				state.flags&requestMatchDispatchPath != 0,
+				state.decodeParams,
+			),
+		})
+		if state.flags&requestMatchPattern != 0 {
+			next.Pattern = state.pattern
+		}
+		return next
 	}
 
 	paramsMatch := paramsEqual(Params(req), state.params)
@@ -890,6 +908,8 @@ func (ctx *requestStateContext) Value(key any) any {
 		if ctx.flags&requestStateDecodeParams != 0 {
 			return ctx.decodeParams
 		}
+	case requestStateKey:
+		return true
 	}
 	return ctx.Context.Value(key)
 }
@@ -925,6 +945,11 @@ func requestWithState(req *http.Request, state requestState) *http.Request {
 }
 
 func dispatchState(req *http.Request) (string, match.Params, bool) {
+	path, decodeParams := dispatchPathState(req)
+	return path, Params(req), decodeParams
+}
+
+func dispatchPathState(req *http.Request) (string, bool) {
 	path, ok := dispatchPath(req)
 	decodeParams := dispatchDecodeParams(req)
 	if !ok {
@@ -933,7 +958,7 @@ func dispatchState(req *http.Request) (string, match.Params, bool) {
 			path, decodeParams = escapedSlashMatchPath(req)
 		}
 	}
-	return path, Params(req), decodeParams
+	return path, decodeParams
 }
 
 func escapedSlashMatchPath(req *http.Request) (string, bool) {
@@ -1123,7 +1148,7 @@ func hasEscapedSlashPattern(pattern string) bool {
 }
 
 func validateUniqueParamNames(pattern string) error {
-	var seenNames [4]string
+	var seenNames [8]string
 	seenCount := 0
 	var seenMap map[string]struct{}
 	paramsInSegment := 0
@@ -1390,6 +1415,11 @@ func dispatchPath(req *http.Request) (string, bool) {
 func dispatchDecodeParams(req *http.Request) bool {
 	decode, _ := decodeParamsFromContext(req.Context())
 	return decode
+}
+
+func requestHasArcState(ctx context.Context) bool {
+	hasState, _ := ctx.Value(requestStateKey).(bool)
+	return hasState
 }
 
 // Params returns the parameters captured while matching req.

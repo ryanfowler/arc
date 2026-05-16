@@ -134,7 +134,7 @@ type mountedHandler struct {
 }
 
 func (h mountedHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	path, _, decodeParams := dispatchState(req)
+	path, decodeParams := dispatchPathState(req)
 	if decodeParams {
 		path = decodedMatchPath(path)
 	}
