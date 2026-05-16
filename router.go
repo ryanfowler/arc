@@ -938,7 +938,9 @@ func hasEscapedSlashPattern(pattern string) bool {
 }
 
 func validateUniqueParamNames(pattern string) error {
-	seen := make(map[string]struct{})
+	var seenNames [4]string
+	seenCount := 0
+	var seenMap map[string]struct{}
 	paramsInSegment := 0
 
 	for i := 0; i < len(pattern); {
@@ -976,10 +978,28 @@ func validateUniqueParamNames(pattern string) error {
 				}
 			}
 
-			if _, ok := seen[name]; ok {
-				return ErrDuplicateParamName
+			if seenMap != nil {
+				if _, ok := seenMap[name]; ok {
+					return ErrDuplicateParamName
+				}
+				seenMap[name] = struct{}{}
+			} else {
+				for j := 0; j < seenCount; j++ {
+					if seenNames[j] == name {
+						return ErrDuplicateParamName
+					}
+				}
+				if seenCount < len(seenNames) {
+					seenNames[seenCount] = name
+					seenCount++
+				} else {
+					seenMap = make(map[string]struct{}, seenCount+1)
+					for _, seenName := range seenNames {
+						seenMap[seenName] = struct{}{}
+					}
+					seenMap[name] = struct{}{}
+				}
 			}
-			seen[name] = struct{}{}
 			i = end + 1
 		case '}':
 			if i+1 < len(pattern) && pattern[i+1] == '}' {
