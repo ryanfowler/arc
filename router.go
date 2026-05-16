@@ -219,6 +219,11 @@ func (r *Router) Use(mw ...Middleware) {
 // ServeHTTP satisfies http.Handler. It should usually be called by net/http
 // rather than directly.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if path, ok := dispatchPath(req); ok {
+		r.serve(w, req, path, Params(req), dispatchDecodeParams(req))
+		return
+	}
+
 	path := req.URL.Path
 	decodeParams := false
 	if hasEscapedSlash(req.URL.RawPath) {

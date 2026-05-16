@@ -1591,6 +1591,29 @@ func TestMountPatternIncludesSubRouterPatterns(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestMountArcRouterPreservesMountParamsWithInnerRouteParams(t *testing.T) {
+	r := New()
+	inner := New()
+	inner.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.URL.Path; got != "/users/42" {
+			t.Fatalf("req.URL.Path = %q, want %q", got, "/users/42")
+		}
+		if got := Param(req, "version"); got != "v1" {
+			t.Fatalf("Param(version) = %q, want %q", got, "v1")
+		}
+		if got := Param(req, "id"); got != "42" {
+			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+	r.Mount("/api/{version}", inner)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestMountRootPaths(t *testing.T) {
 	for _, path := range []string{"/assets", "/assets/"} {
 		t.Run(path, func(t *testing.T) {
