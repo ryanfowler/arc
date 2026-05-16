@@ -206,9 +206,7 @@ func BenchmarkRouterServeHTTP(b *testing.B) {
 					benchmarkParam = Param(req, "tenant")
 					w.WriteHeader(http.StatusNoContent)
 				})
-				req := httptest.NewRequest(http.MethodGet, "http://acme.example.com/users/42", nil)
-				req.Host = "ACME.example.com:8080"
-				return r, req
+				return r, httptest.NewRequest(http.MethodGet, "http://acme.example.com/users/42", nil)
 			},
 		},
 		{

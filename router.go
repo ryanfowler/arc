@@ -491,7 +491,23 @@ func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path strin
 }
 
 func normalizeRequestHost(host string) string {
+	if isLowercaseASCIIHost(host) {
+		return host
+	}
 	return strings.ToLower(normalizeHostAddress(hostWithoutPort(host)))
+}
+
+func isLowercaseASCIIHost(host string) bool {
+	for i := 0; i < len(host); i++ {
+		c := host[i]
+		if c >= 'A' && c <= 'Z' {
+			return false
+		}
+		if c == ':' || c == '[' || c == ']' || c >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeHostPattern(pattern string) string {
