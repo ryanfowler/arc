@@ -1123,7 +1123,7 @@ func hasEscapedSlashPattern(pattern string) bool {
 }
 
 func validateUniqueParamNames(pattern string) error {
-	var seenNames [4]string
+	var seenNames [8]string
 	seenCount := 0
 	var seenMap map[string]struct{}
 	paramsInSegment := 0
