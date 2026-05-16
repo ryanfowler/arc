@@ -945,6 +945,11 @@ func requestWithState(req *http.Request, state requestState) *http.Request {
 }
 
 func dispatchState(req *http.Request) (string, match.Params, bool) {
+	path, decodeParams := dispatchPathState(req)
+	return path, Params(req), decodeParams
+}
+
+func dispatchPathState(req *http.Request) (string, bool) {
 	path, ok := dispatchPath(req)
 	decodeParams := dispatchDecodeParams(req)
 	if !ok {
@@ -953,7 +958,7 @@ func dispatchState(req *http.Request) (string, match.Params, bool) {
 			path, decodeParams = escapedSlashMatchPath(req)
 		}
 	}
-	return path, Params(req), decodeParams
+	return path, decodeParams
 }
 
 func escapedSlashMatchPath(req *http.Request) (string, bool) {
