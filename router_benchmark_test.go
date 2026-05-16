@@ -242,6 +242,133 @@ func BenchmarkRouterServeHTTP(b *testing.B) {
 	}
 }
 
+func BenchmarkRouterServeHTTPRealWorld(b *testing.B) {
+	benchmarks := []struct {
+		name string
+		new  func() (*Router, *http.Request)
+	}{
+		{
+			name: "tenant_api_detail_route",
+			new: func() (*Router, *http.Request) {
+				r := New()
+				r.Use(benchmarkMiddleware)
+
+				tenant := r.Host("{tenant}.example.com")
+				api := tenant.SubRouter("/api/{version}")
+				for i := 0; i < 40; i++ {
+					api.Get("/resources/"+strconv.Itoa(i), writeBenchmarkStatus(http.StatusNoContent))
+				}
+				api.Get("/users/{id}/projects/{projectID}", func(w http.ResponseWriter, req *http.Request) {
+					benchmarkParam = Param(req, "projectID")
+					w.WriteHeader(http.StatusNoContent)
+				})
+
+				return r, httptest.NewRequest(http.MethodGet, "https://acme.example.com/api/v1/users/42/projects/abc", nil)
+			},
+		},
+		{
+			name: "mounted_assets",
+			new: func() (*Router, *http.Request) {
+				r := New()
+				r.Mount("/assets", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					benchmarkParam = req.URL.Path
+					w.WriteHeader(http.StatusNoContent)
+				}))
+				r.Get("/assets/healthz", writeBenchmarkStatus(http.StatusAccepted))
+
+				return r, httptest.NewRequest(http.MethodGet, "/assets/css/app.css", nil)
+			},
+		},
+		{
+			name: "api_not_found_below_subrouter",
+			new: func() (*Router, *http.Request) {
+				r := New()
+				api := r.SubRouter("/api")
+				api.Get("/users/{id}", writeBenchmarkStatus(http.StatusNoContent))
+
+				return r, httptest.NewRequest(http.MethodGet, "/api/missing", nil)
+			},
+		},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			r, req := bm.new()
+			w := &benchmarkResponseWriter{}
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				w.status = 0
+				r.ServeHTTP(w, req)
+			}
+
+			benchmarkStatus = w.status
+		})
+	}
+}
+
+func BenchmarkRouterServeHTTPEdgeCases(b *testing.B) {
+	benchmarks := []struct {
+		name string
+		new  func() (*Router, *http.Request)
+	}{
+		{
+			name: "relaxed_trailing_slash_param",
+			new: func() (*Router, *http.Request) {
+				r := New()
+				r.SetStrictSlash(false)
+				r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+					benchmarkParam = Param(req, "id")
+					w.WriteHeader(http.StatusNoContent)
+				})
+
+				return r, httptest.NewRequest(http.MethodGet, "/users/42/", nil)
+			},
+		},
+		{
+			name: "direct_route_below_subrouter",
+			new: func() (*Router, *http.Request) {
+				r := New()
+				api := r.SubRouter("/api")
+				api.Get("/users/{id}", writeBenchmarkStatus(http.StatusNoContent))
+				r.Get("/api/healthz", writeBenchmarkStatus(http.StatusAccepted))
+
+				return r, httptest.NewRequest(http.MethodGet, "/api/healthz", nil)
+			},
+		},
+		{
+			name: "uppercase_host_with_port",
+			new: func() (*Router, *http.Request) {
+				r := New()
+				tenant := r.Host("{tenant}.example.com")
+				tenant.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+					benchmarkParam = Param(req, "tenant")
+					w.WriteHeader(http.StatusNoContent)
+				})
+
+				return r, httptest.NewRequest(http.MethodGet, "https://ACME.EXAMPLE.COM:8443/users/42", nil)
+			},
+		},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			r, req := bm.new()
+			w := &benchmarkResponseWriter{}
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				w.status = 0
+				r.ServeHTTP(w, req)
+			}
+
+			benchmarkStatus = w.status
+		})
+	}
+}
+
 func BenchmarkMountMatcherMatch(b *testing.B) {
 	benchmarks := []struct {
 		name  string
