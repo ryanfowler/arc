@@ -1893,6 +1893,29 @@ func TestHostErrReturnsMatchErrors(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestHostErrRejectsEmptyNormalizedHost(t *testing.T) {
+	tests := []string{
+		"",
+		":80",
+	}
+
+	for _, pattern := range tests {
+		t.Run(pattern, func(t *testing.T) {
+			r := New()
+			child, err := r.HostErr(pattern)
+			if !errors.Is(err, match.ErrInvalidParam) {
+				t.Fatalf("HostErr(%q) child, error = %v, %v; want ErrInvalidParam", pattern, child, err)
+			}
+			if child != nil {
+				t.Fatalf("HostErr(%q) child = %v, want nil", pattern, child)
+			}
+			if r.hasHosts {
+				t.Fatalf("HostErr(%q) set hasHosts = true, want false", pattern)
+			}
+		})
+	}
+}
+
 func TestHostRouterFallsThroughToRootWhenHostDoesNotMatch(t *testing.T) {
 	r := New()
 	api := r.Host("api.example.com")
