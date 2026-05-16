@@ -11,6 +11,8 @@ import (
 	"github.com/ryanfowler/match"
 )
 
+var normalizeHostSink string
+
 func TestRouterMatchesRouteAndParams(t *testing.T) {
 	r := New()
 	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
@@ -1972,6 +1974,63 @@ func TestHostRouterNormalizesBracketedIPv6HostWithoutPort(t *testing.T) {
 	r.ServeHTTP(rec, req)
 
 	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestNormalizeRequestHost(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		want string
+	}{
+		{
+			name: "lowercase_ascii",
+			host: "api.example.com",
+			want: "api.example.com",
+		},
+		{
+			name: "uppercase_ascii",
+			host: "API.example.com",
+			want: "api.example.com",
+		},
+		{
+			name: "port",
+			host: "api.example.com:8080",
+			want: "api.example.com",
+		},
+		{
+			name: "bracketed_ipv6",
+			host: "[::1]",
+			want: "::1",
+		},
+		{
+			name: "unicode",
+			host: "CAFÉ.example.com",
+			want: "café.example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeRequestHost(tt.host); got != tt.want {
+				t.Fatalf("normalizeRequestHost(%q) = %q, want %q", tt.host, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeRequestHostLowercaseASCIIFastPathAllocatesZero(t *testing.T) {
+	host := "api.example.com"
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		normalizeHostSink = normalizeRequestHost(host)
+	})
+
+	if normalizeHostSink != host {
+		t.Fatalf("normalizeRequestHost(%q) = %q, want %q", host, normalizeHostSink, host)
+	}
+	if allocs != 0 {
+		t.Fatalf("normalizeRequestHost(%q) allocated %v times, want 0", host, allocs)
+	}
 }
 
 func TestHostRouterInheritsStrictSlashSetting(t *testing.T) {
