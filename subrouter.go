@@ -6,13 +6,18 @@ import (
 	"strings"
 )
 
-// SubRouter registers and returns a child router for an application section
-// mounted at pattern.
+// SubRouter registers and returns a child router mounted at pattern.
 //
 // Use a subrouter when several routes share a path prefix, middleware, fallback
-// handlers, or slash/method settings. The pattern uses the
-// github.com/ryanfowler/match route grammar. Parameters captured by the mount
-// pattern are available to child middleware and handlers.
+// handlers, or slash/method settings:
+//
+//	api := r.SubRouter("/api/{version}")
+//	api.Use(requireAuth)
+//	api.Get("/users/{id}", getUser)
+//
+// The pattern follows Arc's path pattern syntax. Parameters captured by the
+// mount pattern are available to child middleware and handlers through
+// [http.Request.PathValue].
 //
 // The child matches against the remaining path after the mount point. For
 // example, a child mounted at /api matches /users for a request to /api/users,
@@ -32,8 +37,9 @@ import (
 // fallback handlers. The child copies the parent's current strict slash,
 // implicit HEAD, and fallback handler settings when it is created.
 //
-// Invalid, duplicate, or ambiguous mount patterns panic with the error returned
-// by match. Use TrySubRouter to receive the registration error instead.
+// An empty pattern is treated as "/"; non-root patterns have trailing slashes
+// trimmed before registration. Invalid, duplicate, or ambiguous mount patterns
+// panic. Use [Router.TrySubRouter] to receive the registration error instead.
 func (r *Router) SubRouter(pattern string) *Router {
 	child, err := r.TrySubRouter(pattern)
 	if err != nil {
@@ -45,10 +51,11 @@ func (r *Router) SubRouter(pattern string) *Router {
 // TrySubRouter registers and returns a child router mounted at pattern and
 // returns registration errors.
 //
-// The pattern uses the github.com/ryanfowler/match route grammar. An empty
-// pattern is treated as /. Registration errors include non-absolute path
+// An empty pattern is treated as "/"; non-root patterns have trailing slashes
+// trimmed before registration. Registration errors include non-absolute path
 // patterns, invalid parameter syntax, duplicate parameter names within the
-// pattern, and mount conflicts reported by match.
+// pattern, duplicate mounts, and ambiguous mount patterns that could match the
+// same requests.
 func (r *Router) TrySubRouter(pattern string) (*Router, error) {
 	child := newChildRouter(r)
 	pattern = cleanMountPattern(pattern)
@@ -71,10 +78,14 @@ func (r *Router) TrySubRouter(pattern string) (*Router, error) {
 
 // Mount registers h below pattern and lets that handler own the remaining path.
 //
-// Use Mount for file servers, another router, or any existing http.Handler that
-// should handle everything below a path. The pattern uses the
-// github.com/ryanfowler/match route grammar. Parameters captured by the mount
-// pattern are available to middleware and the mounted handler.
+// Use Mount for file servers, another router, or any existing [http.Handler]
+// that should handle everything below a path:
+//
+//	r.Mount("/assets", http.FileServerFS(assets))
+//
+// The pattern follows Arc's path pattern syntax. Parameters captured by the
+// mount pattern are available to middleware and the mounted handler through
+// [http.Request.PathValue].
 //
 // The mounted handler receives the remaining path after the mount point as
 // req.URL.Path. For example, a handler mounted at /assets receives /app.css for
@@ -87,8 +98,9 @@ func (r *Router) TrySubRouter(pattern string) (*Router, error) {
 // /assets/healthz, handles that exact path. Other paths under the mounted prefix
 // are owned by the mounted handler.
 //
-// Invalid, duplicate, or ambiguous mount patterns panic with the error returned
-// by match. Use TryMount to receive the registration error instead.
+// An empty pattern is treated as "/"; non-root patterns have trailing slashes
+// trimmed before registration. Invalid, duplicate, or ambiguous mount patterns
+// panic. Use [Router.TryMount] to receive the registration error instead.
 func (r *Router) Mount(pattern string, h http.Handler) {
 	if err := r.TryMount(pattern, h); err != nil {
 		panic(err)
@@ -97,11 +109,11 @@ func (r *Router) Mount(pattern string, h http.Handler) {
 
 // TryMount registers h below pattern and returns registration errors.
 //
-// The pattern uses the github.com/ryanfowler/match route grammar. An empty
-// pattern is treated as /. Registration errors include non-absolute path
+// An empty pattern is treated as "/"; non-root patterns have trailing slashes
+// trimmed before registration. Registration errors include non-absolute path
 // patterns, invalid parameter syntax, duplicate parameter names within the
-// pattern, and mount conflicts reported by match. A nil handler is treated as
-// http.NotFoundHandler.
+// pattern, duplicate mounts, and ambiguous mount patterns that could match the
+// same requests. A nil handler is treated as [http.NotFoundHandler].
 func (r *Router) TryMount(pattern string, h http.Handler) error {
 	if h == nil {
 		h = http.NotFoundHandler()
