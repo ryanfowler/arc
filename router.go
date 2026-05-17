@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -630,11 +631,13 @@ func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path strin
 	if c.mounted {
 		req.Pattern = c.pattern
 		mountPath := path
+		rawMountPath := ""
 		if decodeParams {
+			rawMountPath = escapedSlashRawPath(mountPath)
 			mountPath = decodedMatchPath(mountPath)
 		}
 		final := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			c.handler.ServeHTTP(w, requestWithURLPath(req, mountPath))
+			c.handler.ServeHTTP(w, requestWithURLPath(req, mountPath, rawMountPath))
 		})
 		serveWithMiddleware(w, req, final, c.middleware)
 		return
@@ -733,8 +736,8 @@ func requestForHandler(req *http.Request, params match.Params, pattern string) *
 	return req
 }
 
-func requestWithURLPath(req *http.Request, path string) *http.Request {
-	if req.URL.Path == path {
+func requestWithURLPath(req *http.Request, path, rawPath string) *http.Request {
+	if req.URL.Path == path && (rawPath == "" || req.URL.RawPath == rawPath) {
 		return req
 	}
 
@@ -742,7 +745,7 @@ func requestWithURLPath(req *http.Request, path string) *http.Request {
 	*next = *req
 	url := *req.URL
 	url.Path = path
-	url.RawPath = ""
+	url.RawPath = rawPath
 	next.URL = &url
 	return next
 }
@@ -1192,6 +1195,51 @@ func restoreParams(params match.Params) match.Params {
 
 func decodedMatchPath(path string) string {
 	return restoreEscapedSlash(path)
+}
+
+func escapedSlashRawPath(path string) string {
+	if strings.IndexByte(path, escapedSlashMarker) < 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.Grow(len(path) + 2)
+	chunkStart := 0
+	for i := 0; i < len(path); i++ {
+		switch path[i] {
+		case '/':
+			writeEscapedPathChunk(&b, path[chunkStart:i])
+			b.WriteByte('/')
+			chunkStart = i + 1
+		case escapedSlashMarker:
+			writeEscapedPathChunk(&b, path[chunkStart:i])
+			if i+1 >= len(path) {
+				b.WriteString("%00")
+				chunkStart = i + 1
+				continue
+			}
+			i++
+			switch path[i] {
+			case escapedSlashCode:
+				b.WriteString("%2F")
+			case escapedSlashMarker:
+				b.WriteString("%00")
+			default:
+				b.WriteString("%00")
+				b.WriteString(url.PathEscape(path[i : i+1]))
+			}
+			chunkStart = i + 1
+		}
+	}
+	writeEscapedPathChunk(&b, path[chunkStart:])
+	return b.String()
+}
+
+func writeEscapedPathChunk(b *strings.Builder, s string) {
+	if s == "" {
+		return
+	}
+	b.WriteString(url.PathEscape(s))
 }
 
 func setPathValues(req *http.Request, params match.Params) {

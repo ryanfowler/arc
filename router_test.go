@@ -1740,6 +1740,29 @@ func TestMountArcRouterPreservesMountParamsWithInnerRouteParams(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestMountArcRouterPreservesEscapedSlashRawPath(t *testing.T) {
+	r := New()
+	inner := New()
+	inner.Get("/files/{name}", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.URL.Path; got != "/files/a/b" {
+			t.Fatalf("req.URL.Path = %q, want %q", got, "/files/a/b")
+		}
+		if got := req.URL.RawPath; got != "/files/a%2Fb" {
+			t.Fatalf("req.URL.RawPath = %q, want %q", got, "/files/a%2Fb")
+		}
+		if got := req.PathValue("name"); got != "a/b" {
+			t.Fatalf("PathValue(name) = %q, want %q", got, "a/b")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+	r.Mount("/api", inner)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/files/a%2Fb", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestMountRootPaths(t *testing.T) {
 	for _, path := range []string{"/assets", "/assets/"} {
 		t.Run(path, func(t *testing.T) {
