@@ -2344,7 +2344,9 @@ func TestRequestPatternIncludesSubRouterPatternsForMethodNotAllowed(t *testing.T
 	r := New()
 	api := r.SubRouter("/api/{version}")
 	api.Get("/users/{id}", writeStatus(http.StatusNoContent))
-	r.SetMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	called := false
+	api.SetMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		called = true
 		if got := req.Pattern; got != "/api/{version}/users/{id}" {
 			t.Fatalf("req.Pattern = %q, want %q", got, "/api/{version}/users/{id}")
 		}
@@ -2355,6 +2357,9 @@ func TestRequestPatternIncludesSubRouterPatternsForMethodNotAllowed(t *testing.T
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/users/42", nil))
 
 	assertStatus(t, rec, http.StatusMethodNotAllowed)
+	if !called {
+		t.Fatal("method not allowed handler was not called")
+	}
 }
 
 func TestRequestPatternEmptyForNotFound(t *testing.T) {
