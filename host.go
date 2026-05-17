@@ -24,7 +24,9 @@ import "github.com/ryanfowler/match"
 // on the returned router through [http.Request.PathValue]. If no host pattern
 // matches, dispatch falls through to the parent router's subrouters and routes.
 //
-// Middleware already registered on the parent wraps the host router.
+// Middleware already registered on the parent is inherited by the host router.
+// It runs after the host router selects its final route or fallback, so route
+// and method-not-allowed middleware can read the final Request.Pattern.
 // Middleware added to the returned router applies only inside that host router,
 // including host-router fallback handlers. The returned router copies the
 // parent's current strict slash, implicit HEAD, and fallback handler settings

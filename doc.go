@@ -187,9 +187,9 @@
 // available through Request.PathValue.
 //
 // Middleware can read Request.Pattern once the route, mount, or
-// method-not-allowed fallback it wraps has been selected. Parent middleware that
-// wraps a host router or subrouter runs before the child router performs its
-// final path match, so it should not depend on the child's final pattern.
+// method-not-allowed fallback it wraps has been selected. Middleware inherited
+// by host routers and subrouters runs after the child router selects its final
+// route or method-not-allowed fallback, so it sees the final path pattern.
 //
 // Not-found fallback handlers receive an empty Request.Pattern, even when a
 // host or subrouter prefix matched and contributed parameters.
@@ -266,8 +266,8 @@
 //	r.Use(requireAuth)
 //	r.Get("/account", account) // uses requireAuth
 //
-// Middleware registered on a parent before creating a child router wraps the
-// child. Middleware added to the child applies only inside that child.
+// Middleware registered on a parent before creating a child router is inherited
+// by the child. Middleware added to the child applies only inside that child.
 //
 // # Subrouters
 //
@@ -373,8 +373,8 @@
 //	}))
 //
 // Fallback handlers run through middleware for the router that owns the
-// fallback. For a subrouter or host router, that includes parent middleware that
-// wrapped the child plus middleware registered on the child.
+// fallback. For a subrouter or host router, that includes middleware inherited
+// from the parent plus middleware registered on the child.
 //
 // Passing nil to Router.SetNotFound or Router.SetMethodNotAllowed leaves the
 // existing fallback handler unchanged.
@@ -426,7 +426,7 @@
 //
 // Later changes on the parent do not affect existing children. Middleware
 // follows the same registration-order model: middleware already registered on
-// the parent wraps the child, while later parent middleware does not.
+// the parent is inherited by the child, while later parent middleware is not.
 //
 // Child routers can still be configured independently after creation.
 //

@@ -32,7 +32,9 @@ import (
 // routes such as /api/healthz on the child as /healthz when they should use the
 // child's middleware and fallback settings.
 //
-// Middleware already registered on the parent wraps the child router. Middleware
+// Middleware already registered on the parent is inherited by the child router.
+// It runs after the child selects its final route or fallback, so route and
+// method-not-allowed middleware can read the final Request.Pattern. Middleware
 // added to the child applies only inside the child router, including child
 // fallback handlers. The child copies the parent's current strict slash,
 // implicit HEAD, and fallback handler settings when it is created.

@@ -623,8 +623,8 @@ func serveWithMiddleware(w http.ResponseWriter, req *http.Request, h http.Handle
 		h.ServeHTTP(w, req)
 		return
 	}
-	// Child router and mount dispatch state is carried on the call stack, so the
-	// final handler is request-specific.
+	// Mount dispatch state is carried on the call stack, so the final handler is
+	// request-specific.
 	compose(h, middleware).ServeHTTP(w, req)
 }
 
@@ -640,9 +640,10 @@ func newChildRouter(parent *Router) *childRouter {
 	r.SetStrictSlash(parent.strictSlash)
 	r.SetImplicitHead(parent.implicitHead)
 	r.patternPrefix = parent.patternPrefix
+	r.middleware = slices.Clone(parent.middleware)
+	r.compileFallbacks()
 	return &childRouter{
-		router:     r,
-		middleware: slices.Clone(parent.middleware),
+		router: r,
 	}
 }
 
@@ -666,13 +667,6 @@ func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path strin
 		return
 	}
 
-	if len(c.middleware) > 0 {
-		final := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			c.router.serve(w, req, path, params, decodeParams)
-		})
-		serveWithMiddleware(w, req, final, c.middleware)
-		return
-	}
 	c.router.serve(w, req, path, params, decodeParams)
 }
 
