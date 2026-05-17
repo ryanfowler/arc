@@ -1,6 +1,7 @@
-// Package arc provides a small HTTP router for Go applications that want route
-// parameters, middleware groups, subrouters, mounted handlers, host-based
-// routing, and clear method handling while staying close to net/http.
+// Package arc provides a minimal, high-performance HTTP router for Go
+// applications that want route parameters, middleware groups, subrouters,
+// mounted handlers, host-based routing, and clear method handling while
+// staying close to net/http.
 //
 // Handlers are ordinary http.Handler and http.HandlerFunc values. Middleware is
 // normal handler wrapping. A Router is itself an http.Handler, so it can be
