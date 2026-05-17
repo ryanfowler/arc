@@ -2442,6 +2442,94 @@ func TestRequestPatternVisibleToSubRouterRouteMiddleware(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestRequestPatternVisibleToInheritedSubRouterMiddleware(t *testing.T) {
+	r := New()
+	parentCalled := false
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			parentCalled = true
+			if got := req.Pattern; got != "/api/{version}/users/{id}" {
+				t.Fatalf("parent middleware req.Pattern = %q, want %q", got, "/api/{version}/users/{id}")
+			}
+			if got := req.PathValue("version"); got != "v1" {
+				t.Fatalf("parent middleware req.PathValue(version) = %q, want %q", got, "v1")
+			}
+			if got := req.PathValue("id"); got != "42" {
+				t.Fatalf("parent middleware req.PathValue(id) = %q, want %q", got, "42")
+			}
+			next.ServeHTTP(w, req)
+		})
+	})
+	api := r.SubRouter("/api/{version}")
+	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+	if !parentCalled {
+		t.Fatal("parent middleware was not called")
+	}
+}
+
+func TestRequestPatternVisibleToInheritedHostRouterMiddleware(t *testing.T) {
+	r := New()
+	parentCalled := false
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			parentCalled = true
+			if got := req.Pattern; got != "/users/{id}" {
+				t.Fatalf("parent middleware req.Pattern = %q, want %q", got, "/users/{id}")
+			}
+			if got := req.PathValue("tenant"); got != "api" {
+				t.Fatalf("parent middleware req.PathValue(tenant) = %q, want %q", got, "api")
+			}
+			if got := req.PathValue("id"); got != "42" {
+				t.Fatalf("parent middleware req.PathValue(id) = %q, want %q", got, "42")
+			}
+			next.ServeHTTP(w, req)
+		})
+	})
+	api := r.Host("{tenant}.example.com")
+	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://api.example.com/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+	if !parentCalled {
+		t.Fatal("parent middleware was not called")
+	}
+}
+
+func TestRequestPatternVisibleToInheritedSubRouterMethodNotAllowedMiddleware(t *testing.T) {
+	r := New()
+	parentCalled := false
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			parentCalled = true
+			if got := req.Pattern; got != "/api/{version}/users/{id}" {
+				t.Fatalf("parent middleware req.Pattern = %q, want %q", got, "/api/{version}/users/{id}")
+			}
+			next.ServeHTTP(w, req)
+		})
+	})
+	api := r.SubRouter("/api/{version}")
+	api.Get("/users/{id}", writeStatus(http.StatusNoContent))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/users/42", nil))
+
+	assertStatus(t, rec, http.StatusMethodNotAllowed)
+	if !parentCalled {
+		t.Fatal("parent middleware was not called")
+	}
+}
+
 func TestRequestPatternSetForMethodNotAllowed(t *testing.T) {
 	r := New()
 	r.Get("/users/{id}", writeStatus(http.StatusNoContent))

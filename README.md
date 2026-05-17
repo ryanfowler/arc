@@ -245,9 +245,9 @@ Host patterns are not included in `req.Pattern`; host captures are still
 available through `req.PathValue`.
 
 Middleware can read `req.Pattern` once the route, mount, or method-not-allowed
-fallback it wraps has been selected. Parent middleware that wraps a host router
-or subrouter runs before the child router performs its final path match, so it
-should not depend on the child's final pattern.
+fallback it wraps has been selected. Middleware inherited by host routers and
+subrouters runs after the child router selects its final route or
+method-not-allowed fallback, so it sees the final path pattern.
 
 Not-found fallback handlers receive an empty `req.Pattern`, even when a host or
 subrouter prefix matched and contributed parameters.
@@ -479,8 +479,8 @@ api.SetNotFound(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) 
 ```
 
 Fallback handlers run through middleware for the router that owns the fallback.
-For a subrouter or host router, that includes parent middleware that wrapped the
-child plus middleware registered on the child.
+For a subrouter or host router, that includes middleware inherited from the
+parent plus middleware registered on the child.
 
 Passing `nil` to `SetNotFound` or `SetMethodNotAllowed` leaves the existing
 fallback handler unchanged.
@@ -547,7 +547,7 @@ api.Get("/users/{id}", getUser)
 
 Later changes on the parent do not affect existing children. Middleware follows
 the same registration-order model: middleware already registered on the parent
-wraps the child, while later parent middleware does not.
+is inherited by the child, while later parent middleware is not.
 
 Child routers can still be configured independently after creation.
 
