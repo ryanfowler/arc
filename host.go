@@ -6,14 +6,23 @@ import "github.com/ryanfowler/match"
 // pattern.
 //
 // Use Host when one application serves different routes for different domains
-// or subdomains. Host patterns use the github.com/ryanfowler/match grammar, for
-// example "api.example.com" or "{tenant}.example.com". Request hosts are
-// matched case-insensitively, a port in Request.Host is ignored, and brackets
-// around IPv6 literals are ignored.
+// or subdomains:
+//
+//	api := r.Host("api.example.com")
+//	api.Get("/users/{id}", getUser)
+//
+//	tenant := r.Host("{tenant}.example.com")
+//	tenant.Get("/", tenantHome)
+//
+// Host patterns use Arc's parameter syntax. For example, "api.example.com"
+// matches one literal host and "{tenant}.example.com" captures the variable
+// text before ".example.com" as "tenant". Request hosts are matched
+// case-insensitively, a port in Request.Host is ignored, and brackets around
+// IPv6 literals are ignored.
 //
 // Parameters captured by the host pattern are available to handlers registered
-// on the returned router. If no host pattern matches, dispatch falls through to
-// the parent router's subrouters and routes.
+// on the returned router through [http.Request.PathValue]. If no host pattern
+// matches, dispatch falls through to the parent router's subrouters and routes.
 //
 // Middleware already registered on the parent wraps the host router.
 // Middleware added to the returned router applies only inside that host router,
@@ -21,8 +30,8 @@ import "github.com/ryanfowler/match"
 // parent's current strict slash, implicit HEAD, and fallback handler settings
 // when it is created.
 //
-// Invalid, duplicate, or ambiguous host patterns panic with the error returned
-// by match. Use TryHost to receive the registration error instead.
+// Invalid, duplicate, or ambiguous host patterns panic. Use [Router.TryHost] to
+// receive the registration error instead.
 func (r *Router) Host(pattern string) *Router {
 	child, err := r.TryHost(pattern)
 	if err != nil {
@@ -34,9 +43,9 @@ func (r *Router) Host(pattern string) *Router {
 // TryHost registers and returns a child router for requests whose host matches
 // pattern, and returns registration errors.
 //
-// Host patterns use the github.com/ryanfowler/match grammar. Registration
-// errors include invalid parameter syntax, duplicate parameter names within the
-// pattern, and host conflicts reported by match.
+// Registration errors include empty normalized hosts, invalid parameter syntax,
+// duplicate parameter names within the pattern, duplicate host patterns, and
+// ambiguous host patterns that could match the same requests.
 func (r *Router) TryHost(pattern string) (*Router, error) {
 	child := newChildRouter(r)
 	matchPattern := normalizeHostPattern(pattern)

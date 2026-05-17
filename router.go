@@ -20,25 +20,34 @@ const (
 
 // ErrDuplicateParamName reports a single registered pattern that captures the
 // same parameter name more than once.
+//
+// A duplicate name is invalid even when the captures come from different
+// segments or when one capture is a catch-all parameter.
 var ErrDuplicateParamName = fmt.Errorf("%w: duplicate parameter names are not allowed within one pattern", match.ErrInvalidParam)
 
 // ErrInvalidPathPattern reports a route, subrouter, or mount path pattern that
 // is not an absolute HTTP path.
+//
+// Path patterns registered with [Router.Handle], [Router.HandleAll],
+// [Router.SubRouter], and [Router.Mount] must begin with "/". SubRouter and
+// Mount treat an empty pattern as "/"; route registrations do not.
 var ErrInvalidPathPattern = errors.New("path patterns must begin with /")
 
-// Middleware wraps an HTTP handler on a Router.
+// Middleware wraps an HTTP handler on a [Router].
 //
 // Middleware uses the same shape as standard net/http middleware. If a router
-// uses middleware a, b, and c, requests flow through a, then b, then c, then the
-// matched handler or fallback handler.
+// uses middleware a, b, and c, requests flow through:
+//
+//	a -> b -> c -> matched handler or fallback handler
 type Middleware func(http.Handler) http.Handler
 
-// Router is an http.Handler that dispatches application requests by host, path,
-// and method.
+// Router is an [http.Handler] that dispatches application requests by host,
+// path, and method.
 //
 // Build a router during startup by configuring fallback handlers and
 // registering middleware, host routers, subrouters, mounted handlers, and
-// routes. After it is built, pass it to http.Server or http.ListenAndServe.
+// routes. After it is built, pass it to [http.Server] or
+// [http.ListenAndServe].
 //
 // A Router is safe for concurrent serving after registration is complete. The
 // registration and configuration methods are not safe to call concurrently with
@@ -99,13 +108,15 @@ type childRouter struct {
 	pattern    string
 }
 
-// New creates a Router with defaults suitable for a typical net/http
+// New creates a [Router] with defaults suitable for a typical net/http
 // application.
 //
-// By default, unmatched requests use http.NotFoundHandler and requests whose
-// path matches a route registered for a different method receive
-// 405 Method Not Allowed. GET routes also handle HEAD requests unless an
-// explicit HEAD or any-method route matches.
+// By default:
+//
+//   - unmatched requests use [http.NotFoundHandler];
+//   - paths registered for a different method receive 405 Method Not Allowed;
+//   - GET routes handle HEAD requests unless an explicit HEAD or any-method
+//     route matches.
 //
 // Child routers and host routers copy the parent router's current settings when
 // they are created.
@@ -121,8 +132,8 @@ func New() *Router {
 	return r
 }
 
-// SetNotFound sets the application handler used when no host, subrouter,
-// mounted handler, or route matches a request.
+// SetNotFound sets the handler used when no host router, subrouter, mounted
+// handler, or route matches a request.
 //
 // The handler runs through the router's current middleware stack.
 //
@@ -137,7 +148,8 @@ func (r *Router) SetNotFound(h http.Handler) {
 // SetMethodNotAllowed sets the handler used when a request path matches a route
 // pattern, but the request method was not registered for that pattern.
 //
-// The handler runs through the router's current middleware stack.
+// Arc sets the Allow header before calling the handler. The handler runs
+// through the router's current middleware stack.
 //
 // Passing nil leaves the router's existing method-not-allowed handler
 // unchanged.
@@ -149,7 +161,7 @@ func (r *Router) SetMethodNotAllowed(h http.Handler) {
 }
 
 // SetImplicitHead controls whether HEAD requests may use GET routes when no
-// explicit HEAD or any-method route matches.
+// explicit HEAD or any-method route matches the same path.
 //
 // Implicit HEAD matching is enabled by default. Explicit HEAD and any-method
 // routes take precedence when present.
@@ -161,8 +173,12 @@ func (r *Router) SetImplicitHead(enabled bool) {
 // significant.
 //
 // Strict slash matching is enabled by default. When disabled, a request path
-// ending in "/" may match a route registered without that final slash. Exact
-// route matches still take precedence.
+// ending in "/" may match a route registered without that final slash:
+//
+//	r.SetStrictSlash(false)
+//	r.Get("/users/{id}", getUser) // matches /users/42 and /users/42/
+//
+// Exact route matches still take precedence.
 //
 // Subrouters and host routers copy this setting when they are created. Later
 // changes on the parent do not affect existing children.
@@ -179,8 +195,15 @@ func defaultMethodNotAllowed(w http.ResponseWriter, _ *http.Request) {
 // Middleware applies only to routes, subrouters, host routers, and mounted
 // handlers registered after the call to Use. Fallback handlers use the router's
 // current middleware stack. This lets applications build separate sections of a
-// router with different middleware stacks. Middleware is executed in the order
-// it is added. Use panics if any middleware is nil.
+// router with different middleware stacks:
+//
+//	r.Get("/healthz", health) // no auth middleware
+//
+//	r.Use(requireAuth)
+//	r.Get("/account", account) // uses requireAuth
+//
+// Middleware is executed in the order it is added. Use panics if any middleware
+// is nil.
 func (r *Router) Use(mw ...Middleware) {
 	for _, m := range mw {
 		if m == nil {
@@ -195,18 +218,18 @@ func (r *Router) Use(mw ...Middleware) {
 // or mounted handler.
 //
 // Dispatch checks host routers first. Inside a host or ordinary router, routes,
-// subrouters, and mounted handlers share one path matcher, so the most specific
-// path wins. A route registered directly on a router can therefore handle a
-// path below a subrouter or mounted prefix; other paths below that prefix are
-// still owned by the child, including not-found and method-not-allowed handling.
+// subrouters, and mounted handlers share one path matcher. The most specific
+// path wins, so a direct route can handle a path below a subrouter or mounted
+// prefix; other paths below that prefix are still owned by the child, including
+// not-found and method-not-allowed handling.
 //
 // Route and subrouter matching uses req.URL.Path unless req.URL.RawPath
 // preserves an escaped slash. In that case, Arc matches an internal decoded
 // path where the escaped slash stays inside its segment and restores captured
-// params before exposing them. Arc does not perform net/http.ServeMux path
-// cleaning redirects.
+// parameters before exposing them through [http.Request.PathValue]. Arc does
+// not perform net/http.ServeMux path cleaning redirects.
 //
-// ServeHTTP satisfies http.Handler. It should usually be called by net/http
+// ServeHTTP satisfies [http.Handler]. It should usually be called by net/http
 // rather than directly.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	path := req.URL.Path

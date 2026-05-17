@@ -4,27 +4,29 @@ import (
 	"net/http"
 )
 
-// Handle registers h for one HTTP method and pattern.
+// Handle registers h for one HTTP method and path pattern.
 //
-// Use Handle when you have an http.Handler value. For http.HandlerFunc
-// handlers, the method helpers such as Get and Post are usually shorter.
+// Use Handle when you have an [http.Handler] value. For [http.HandlerFunc]
+// handlers, the method helpers such as [Router.Get] and [Router.Post] are
+// usually shorter.
 //
-// The pattern uses the github.com/ryanfowler/match route grammar. Invalid,
-// duplicate, or ambiguous patterns panic with the error returned by match. Use
-// TryHandle to receive the registration error instead.
+// The pattern must begin with "/" and may contain named parameters such as
+// "/users/{id}" or catch-all parameters such as "/assets/{*path}". Invalid,
+// duplicate, or ambiguous patterns panic. Use [Router.TryHandle] to receive the
+// registration error instead.
 func (r *Router) Handle(method, pattern string, h http.Handler) {
 	if err := r.TryHandle(method, pattern, h); err != nil {
 		panic(err)
 	}
 }
 
-// TryHandle registers h for one HTTP method and pattern and returns
+// TryHandle registers h for one HTTP method and path pattern and returns
 // registration errors.
 //
-// The pattern uses the github.com/ryanfowler/match route grammar. Registration
-// errors include non-absolute path patterns, invalid parameter syntax,
-// duplicate parameter names within the pattern, and route conflicts reported by
-// match. A nil handler is treated as http.NotFoundHandler.
+// Registration errors include non-absolute path patterns, invalid parameter
+// syntax, duplicate parameter names within the pattern, duplicate registrations,
+// and ambiguous patterns that could match the same requests. A nil handler is
+// treated as [http.NotFoundHandler].
 func (r *Router) TryHandle(method, pattern string, h http.Handler) error {
 	return r.tryHandle(method, pattern, h, false)
 }
@@ -32,16 +34,19 @@ func (r *Router) TryHandle(method, pattern string, h http.Handler) error {
 // HandleAll registers h for pattern and lets it handle any request method.
 //
 // Use HandleAll for endpoints such as health checks or webhooks where the
-// handler should decide which methods are acceptable. The pattern uses the
-// github.com/ryanfowler/match route grammar; for example, /users/{id} captures
-// one segment and /assets/{*path} captures the remaining path.
+// handler should decide which methods are acceptable:
+//
+//	r.HandleAll("/healthz", http.HandlerFunc(health))
+//
+// The path pattern follows Arc's route syntax. For example, "/users/{id}"
+// captures one segment and "/assets/{*path}" captures the remaining path.
 //
 // Routes, subrouters, and mounted handlers share one path matcher on the same
 // router. The most specific path wins, so a direct route below a mounted prefix,
 // such as /api/healthz when /api is a subrouter or mount, handles that path.
 //
-// Invalid, duplicate, or ambiguous patterns panic with the error returned by
-// match. Use TryHandleAll to receive the registration error instead.
+// Invalid, duplicate, or ambiguous patterns panic. Use [Router.TryHandleAll] to
+// receive the registration error instead.
 func (r *Router) HandleAll(pattern string, h http.Handler) {
 	if err := r.TryHandleAll(pattern, h); err != nil {
 		panic(err)
@@ -51,10 +56,10 @@ func (r *Router) HandleAll(pattern string, h http.Handler) {
 // TryHandleAll registers h for pattern, lets it handle any request method, and
 // returns registration errors.
 //
-// The pattern uses the github.com/ryanfowler/match route grammar. Registration
-// errors include non-absolute path patterns, invalid parameter syntax,
-// duplicate parameter names within the pattern, and route conflicts reported by
-// match. A nil handler is treated as http.NotFoundHandler.
+// Registration errors include non-absolute path patterns, invalid parameter
+// syntax, duplicate parameter names within the pattern, duplicate registrations,
+// and ambiguous patterns that could match the same requests. A nil handler is
+// treated as [http.NotFoundHandler].
 //
 // Routes, subrouters, and mounted handlers share one path matcher on the same
 // router. The most specific path wins, so a direct route below a mounted prefix
@@ -103,8 +108,8 @@ func handlerFuncOrNil(h http.HandlerFunc) http.Handler {
 // Get registers h for GET requests matching pattern.
 //
 // By default, the route also handles HEAD requests when no explicit HEAD or
-// any-method route matches. Use Router.SetImplicitHead(false) to require an
-// explicit HEAD route.
+// any-method route matches the same path. Use [Router.SetImplicitHead] with
+// false to require an explicit HEAD route.
 func (r *Router) Get(pattern string, h http.HandlerFunc) {
 	r.Handle(http.MethodGet, pattern, handlerFuncOrNil(h))
 }
