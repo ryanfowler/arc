@@ -22,22 +22,22 @@ import "github.com/ryanfowler/match"
 // when it is created.
 //
 // Invalid, duplicate, or ambiguous host patterns panic with the error returned
-// by match. Use HostErr to receive the registration error instead.
+// by match. Use TryHost to receive the registration error instead.
 func (r *Router) Host(pattern string) *Router {
-	child, err := r.HostErr(pattern)
+	child, err := r.TryHost(pattern)
 	if err != nil {
 		panic(err)
 	}
 	return child
 }
 
-// HostErr registers and returns a child router for requests whose host matches
+// TryHost registers and returns a child router for requests whose host matches
 // pattern, and returns registration errors.
 //
 // Host patterns use the github.com/ryanfowler/match grammar. Registration
 // errors include invalid parameter syntax, duplicate parameter names within the
 // pattern, and host conflicts reported by match.
-func (r *Router) HostErr(pattern string) (*Router, error) {
+func (r *Router) TryHost(pattern string) (*Router, error) {
 	child := newChildRouter(r)
 	matchPattern := normalizeHostPattern(pattern)
 	if matchPattern == "" {

@@ -242,13 +242,13 @@ func TestRouterPercentEncodedStaticPatternConflictsWithDecodedPattern(t *testing
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := New()
-			if err := r.HandleErr(tt.first, writeStatus(http.StatusAccepted)); err != nil {
-				t.Fatalf("HandleErr first route error = %v", err)
+			if err := r.TryHandleAll(tt.first, writeStatus(http.StatusAccepted)); err != nil {
+				t.Fatalf("TryHandleAll first route error = %v", err)
 			}
 
 			var conflict *match.ConflictError
-			if err := r.HandleErr(tt.second, writeStatus(http.StatusNoContent)); !errors.As(err, &conflict) {
-				t.Fatalf("HandleErr second route error = %v, want *match.ConflictError", err)
+			if err := r.TryHandleAll(tt.second, writeStatus(http.StatusNoContent)); !errors.As(err, &conflict) {
+				t.Fatalf("TryHandleAll second route error = %v, want *match.ConflictError", err)
 			}
 
 			rec := httptest.NewRecorder()
@@ -468,9 +468,9 @@ func TestRouterAllowsSamePatternForDifferentMethods(t *testing.T) {
 	}
 }
 
-func TestRouterHandleMatchesAnyMethod(t *testing.T) {
+func TestRouterHandleAllMatchesAnyMethod(t *testing.T) {
 	r := New()
-	r.Handle("/resource", writeStatus(http.StatusNoContent))
+	r.HandleAll("/resource", writeStatus(http.StatusNoContent))
 
 	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch} {
 		t.Run(method, func(t *testing.T) {
@@ -481,10 +481,10 @@ func TestRouterHandleMatchesAnyMethod(t *testing.T) {
 	}
 }
 
-func TestRouterHandleUsesPathSpecificityBeforeMethod(t *testing.T) {
+func TestRouterHandleAllUsesPathSpecificityBeforeMethod(t *testing.T) {
 	r := New()
 	r.Get("/users/{id}", writeStatus(http.StatusAccepted))
-	r.Handle("/users/me", writeStatus(http.StatusNoContent))
+	r.HandleAll("/users/me", writeStatus(http.StatusNoContent))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/users/me", nil))
@@ -494,7 +494,7 @@ func TestRouterHandleUsesPathSpecificityBeforeMethod(t *testing.T) {
 
 func TestRouterMethodRouteWinsOverAnyMethodForSamePattern(t *testing.T) {
 	r := New()
-	r.Handle("/resource", writeStatus(http.StatusNoContent))
+	r.HandleAll("/resource", writeStatus(http.StatusNoContent))
 	r.Post("/resource", writeStatus(http.StatusCreated))
 
 	post := httptest.NewRecorder()
@@ -596,7 +596,7 @@ func TestRouterExplicitHeadWinsOverImplicitGet(t *testing.T) {
 func TestRouterAnyMethodWinsOverImplicitHead(t *testing.T) {
 	r := New()
 	r.Get("/resource", writeStatus(http.StatusAccepted))
-	r.Handle("/resource", writeStatus(http.StatusNoContent))
+	r.HandleAll("/resource", writeStatus(http.StatusNoContent))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/resource", nil))
@@ -712,19 +712,19 @@ func TestRouterSetFallbackHandlersIgnoreNil(t *testing.T) {
 	assertStatus(t, methodNotAllowed, http.StatusMethodNotAllowed)
 }
 
-func TestHandleErrReturnsMatchErrors(t *testing.T) {
+func TestTryHandleReturnsMatchErrors(t *testing.T) {
 	r := New()
-	if err := r.HandleErr("/users/{}", writeStatus(http.StatusNoContent)); !errors.Is(err, match.ErrInvalidParam) {
-		t.Fatalf("HandleErr invalid param error = %v, want ErrInvalidParam", err)
+	if err := r.TryHandle(http.MethodGet, "/users/{}", writeStatus(http.StatusNoContent)); !errors.Is(err, match.ErrInvalidParam) {
+		t.Fatalf("TryHandle invalid param error = %v, want ErrInvalidParam", err)
 	}
 
-	if err := r.HandleErr("/users/{id}", writeStatus(http.StatusNoContent)); err != nil {
-		t.Fatalf("HandleErr valid route error = %v", err)
+	if err := r.TryHandle(http.MethodGet, "/users/{id}", writeStatus(http.StatusNoContent)); err != nil {
+		t.Fatalf("TryHandle valid route error = %v", err)
 	}
 
 	var conflict *match.ConflictError
-	if err := r.HandleErr("/users/{name}", writeStatus(http.StatusNoContent)); !errors.As(err, &conflict) {
-		t.Fatalf("HandleErr conflict error = %v, want *match.ConflictError", err)
+	if err := r.TryHandle(http.MethodGet, "/users/{name}", writeStatus(http.StatusNoContent)); !errors.As(err, &conflict) {
+		t.Fatalf("TryHandle conflict error = %v, want *match.ConflictError", err)
 	}
 }
 
@@ -737,32 +737,32 @@ func TestPathRegistrationsRejectNonAbsolutePatterns(t *testing.T) {
 		{
 			name: "route relative",
 			register: func(r *Router) error {
-				return r.HandleErr("users/{id}", handler)
+				return r.TryHandleAll("users/{id}", handler)
 			},
 		},
 		{
 			name: "route empty",
 			register: func(r *Router) error {
-				return r.HandleErr("", handler)
+				return r.TryHandleAll("", handler)
 			},
 		},
 		{
 			name: "method route relative",
 			register: func(r *Router) error {
-				return r.HandleMethodErr(http.MethodGet, "users/{id}", handler)
+				return r.TryHandle(http.MethodGet, "users/{id}", handler)
 			},
 		},
 		{
 			name: "subrouter relative",
 			register: func(r *Router) error {
-				_, err := r.SubRouterErr("api")
+				_, err := r.TrySubRouter("api")
 				return err
 			},
 		},
 		{
 			name: "mount relative",
 			register: func(r *Router) error {
-				return r.MountErr("assets", handler)
+				return r.TryMount("assets", handler)
 			},
 		},
 	}
@@ -792,38 +792,38 @@ func TestRegistrationRejectsDuplicateParamNames(t *testing.T) {
 		{
 			name: "route",
 			register: func(r *Router) error {
-				return r.HandleErr("/{id}/{id}", handler)
+				return r.TryHandleAll("/{id}/{id}", handler)
 			},
 		},
 		{
 			name: "route catch-all",
 			register: func(r *Router) error {
-				return r.HandleErr("/{id}/{*id}", handler)
+				return r.TryHandleAll("/{id}/{*id}", handler)
 			},
 		},
 		{
 			name: "route many params",
 			register: func(r *Router) error {
-				return r.HandleErr("/{a}/{b}/{c}/{d}/{e}/{a}", handler)
+				return r.TryHandleAll("/{a}/{b}/{c}/{d}/{e}/{a}", handler)
 			},
 		},
 		{
 			name: "subrouter",
 			register: func(r *Router) error {
-				_, err := r.SubRouterErr("/{id}/{id}")
+				_, err := r.TrySubRouter("/{id}/{id}")
 				return err
 			},
 		},
 		{
 			name: "mount",
 			register: func(r *Router) error {
-				return r.MountErr("/{id}/{id}", handler)
+				return r.TryMount("/{id}/{id}", handler)
 			},
 		},
 		{
 			name: "host",
 			register: func(r *Router) error {
-				_, err := r.HostErr("{id}/{id}.example.com")
+				_, err := r.TryHost("{id}/{id}.example.com")
 				return err
 			},
 		},
@@ -842,15 +842,15 @@ func TestRegistrationRejectsDuplicateParamNames(t *testing.T) {
 	}
 }
 
-func TestHandleMethodErrDoesNotPartiallyRegisterFailedRoute(t *testing.T) {
+func TestTryHandleDoesNotPartiallyRegisterFailedRoute(t *testing.T) {
 	r := New()
-	if err := r.HandleMethodErr(http.MethodGet, "/users/{id}", writeStatus(http.StatusNoContent)); err != nil {
-		t.Fatalf("HandleMethodErr valid route error = %v", err)
+	if err := r.TryHandle(http.MethodGet, "/users/{id}", writeStatus(http.StatusNoContent)); err != nil {
+		t.Fatalf("TryHandle valid route error = %v", err)
 	}
 
 	var conflict *match.ConflictError
-	if err := r.HandleMethodErr(http.MethodPost, "/users/{name}", writeStatus(http.StatusCreated)); !errors.As(err, &conflict) {
-		t.Fatalf("HandleMethodErr conflict error = %v, want *match.ConflictError", err)
+	if err := r.TryHandle(http.MethodPost, "/users/{name}", writeStatus(http.StatusCreated)); !errors.As(err, &conflict) {
+		t.Fatalf("TryHandle conflict error = %v, want *match.ConflictError", err)
 	}
 
 	rec := httptest.NewRecorder()
@@ -862,16 +862,16 @@ func TestHandleMethodErrDoesNotPartiallyRegisterFailedRoute(t *testing.T) {
 	}
 }
 
-func TestHandleMethodErrDuplicateDoesNotCorruptRouteTables(t *testing.T) {
+func TestTryHandleDuplicateDoesNotCorruptRouteTables(t *testing.T) {
 	r := New()
-	if err := r.HandleMethodErr(http.MethodGet, "/resource", writeStatus(http.StatusNoContent)); err != nil {
-		t.Fatalf("HandleMethodErr valid route error = %v", err)
+	if err := r.TryHandle(http.MethodGet, "/resource", writeStatus(http.StatusNoContent)); err != nil {
+		t.Fatalf("TryHandle valid route error = %v", err)
 	}
-	if err := r.HandleMethodErr(http.MethodGet, "/resource", writeStatus(http.StatusAccepted)); err == nil {
-		t.Fatal("HandleMethodErr duplicate route error = nil, want error")
+	if err := r.TryHandle(http.MethodGet, "/resource", writeStatus(http.StatusAccepted)); err == nil {
+		t.Fatal("TryHandle duplicate route error = nil, want error")
 	}
-	if err := r.HandleMethodErr(http.MethodPost, "/resource", writeStatus(http.StatusCreated)); err != nil {
-		t.Fatalf("HandleMethodErr post route error = %v", err)
+	if err := r.TryHandle(http.MethodPost, "/resource", writeStatus(http.StatusCreated)); err != nil {
+		t.Fatalf("TryHandle post route error = %v", err)
 	}
 
 	get := httptest.NewRecorder()
@@ -893,12 +893,12 @@ func TestHandlePanicsForInvalidPattern(t *testing.T) {
 		}
 	}()
 
-	New().Handle("/users/{}", writeStatus(http.StatusNoContent))
+	New().Handle(http.MethodGet, "/users/{}", writeStatus(http.StatusNoContent))
 }
 
 func TestNilHandlerUsesNotFoundHandler(t *testing.T) {
 	r := New()
-	r.Handle("/nil", nil)
+	r.Handle(http.MethodGet, "/nil", nil)
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/nil", nil))
@@ -906,9 +906,9 @@ func TestNilHandlerUsesNotFoundHandler(t *testing.T) {
 	assertStatus(t, rec, http.StatusNotFound)
 }
 
-func TestNilHandlerFuncUsesNotFoundHandler(t *testing.T) {
+func TestNilHandleAllUsesNotFoundHandler(t *testing.T) {
 	r := New()
-	r.HandleFunc("/nil", nil)
+	r.HandleAll("/nil", nil)
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/nil", nil))
@@ -916,9 +916,11 @@ func TestNilHandlerFuncUsesNotFoundHandler(t *testing.T) {
 	assertStatus(t, rec, http.StatusNotFound)
 }
 
-func TestNilHandleMethodFuncUsesNotFoundHandler(t *testing.T) {
+func TestNilTryHandleAllUsesNotFoundHandler(t *testing.T) {
 	r := New()
-	r.HandleMethodFunc(http.MethodPost, "/nil", nil)
+	if err := r.TryHandleAll("/nil", nil); err != nil {
+		t.Fatalf("TryHandleAll route error = %v", err)
+	}
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/nil", nil))
@@ -1650,24 +1652,24 @@ func TestSubRouterRejectsAmbiguousMounts(t *testing.T) {
 	r.SubRouter("/api/v{version}.json")
 }
 
-func TestSubRouterErrReturnsMatchErrors(t *testing.T) {
+func TestTrySubRouterReturnsMatchErrors(t *testing.T) {
 	r := New()
-	if child, err := r.SubRouterErr("/users/{}"); !errors.Is(err, match.ErrInvalidParam) {
-		t.Fatalf("SubRouterErr invalid param child, error = %v, %v; want ErrInvalidParam", child, err)
+	if child, err := r.TrySubRouter("/users/{}"); !errors.Is(err, match.ErrInvalidParam) {
+		t.Fatalf("TrySubRouter invalid param child, error = %v, %v; want ErrInvalidParam", child, err)
 	}
 	if r.hasSubRouters {
-		t.Fatal("router hasSubRouters = true after failed first SubRouterErr, want false")
+		t.Fatal("router hasSubRouters = true after failed first TrySubRouter, want false")
 	}
 
-	api, err := r.SubRouterErr("/api/{name}.json")
+	api, err := r.TrySubRouter("/api/{name}.json")
 	if err != nil {
-		t.Fatalf("SubRouterErr valid mount error = %v", err)
+		t.Fatalf("TrySubRouter valid mount error = %v", err)
 	}
 	api.Get("/", writeStatus(http.StatusAccepted))
 
 	var conflict *match.ConflictError
-	if child, err := r.SubRouterErr("/api/v{version}.json"); !errors.As(err, &conflict) {
-		t.Fatalf("SubRouterErr conflict child, error = %v, %v; want *match.ConflictError", child, err)
+	if child, err := r.TrySubRouter("/api/v{version}.json"); !errors.As(err, &conflict) {
+		t.Fatalf("TrySubRouter conflict child, error = %v, %v; want *match.ConflictError", child, err)
 	}
 
 	rec := httptest.NewRecorder()
@@ -1928,22 +1930,22 @@ func TestMountNilHandlerUsesNotFoundHandler(t *testing.T) {
 	assertStatus(t, rec, http.StatusNotFound)
 }
 
-func TestMountErrReturnsMatchErrors(t *testing.T) {
+func TestTryMountReturnsMatchErrors(t *testing.T) {
 	r := New()
-	if err := r.MountErr("/users/{}", writeStatus(http.StatusNoContent)); !errors.Is(err, match.ErrInvalidParam) {
-		t.Fatalf("MountErr invalid param error = %v, want ErrInvalidParam", err)
+	if err := r.TryMount("/users/{}", writeStatus(http.StatusNoContent)); !errors.Is(err, match.ErrInvalidParam) {
+		t.Fatalf("TryMount invalid param error = %v, want ErrInvalidParam", err)
 	}
 	if r.hasSubRouters {
-		t.Fatal("router hasSubRouters = true after failed first MountErr, want false")
+		t.Fatal("router hasSubRouters = true after failed first TryMount, want false")
 	}
 
-	if err := r.MountErr("/api/{name}.json", writeStatus(http.StatusAccepted)); err != nil {
-		t.Fatalf("MountErr valid mount error = %v", err)
+	if err := r.TryMount("/api/{name}.json", writeStatus(http.StatusAccepted)); err != nil {
+		t.Fatalf("TryMount valid mount error = %v", err)
 	}
 
 	var conflict *match.ConflictError
-	if err := r.MountErr("/api/v{version}.json", writeStatus(http.StatusCreated)); !errors.As(err, &conflict) {
-		t.Fatalf("MountErr conflict error = %v, want *match.ConflictError", err)
+	if err := r.TryMount("/api/v{version}.json", writeStatus(http.StatusCreated)); !errors.As(err, &conflict) {
+		t.Fatalf("TryMount conflict error = %v, want *match.ConflictError", err)
 	}
 
 	rec := httptest.NewRecorder()
@@ -1956,8 +1958,8 @@ func TestMountConflictsWithSubRouter(t *testing.T) {
 	r.SubRouter("/api/{name}.json")
 
 	var conflict *match.ConflictError
-	if err := r.MountErr("/api/v{version}.json", writeStatus(http.StatusCreated)); !errors.As(err, &conflict) {
-		t.Fatalf("MountErr conflict error = %v, want *match.ConflictError", err)
+	if err := r.TryMount("/api/v{version}.json", writeStatus(http.StatusCreated)); !errors.As(err, &conflict) {
+		t.Fatalf("TryMount conflict error = %v, want *match.ConflictError", err)
 	}
 }
 
@@ -2074,24 +2076,24 @@ func TestHostRouterPrefersStaticHost(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
-func TestHostErrReturnsMatchErrors(t *testing.T) {
+func TestTryHostReturnsMatchErrors(t *testing.T) {
 	r := New()
-	if child, err := r.HostErr("{}.example.com"); !errors.Is(err, match.ErrInvalidParam) {
-		t.Fatalf("HostErr invalid param child, error = %v, %v; want ErrInvalidParam", child, err)
+	if child, err := r.TryHost("{}.example.com"); !errors.Is(err, match.ErrInvalidParam) {
+		t.Fatalf("TryHost invalid param child, error = %v, %v; want ErrInvalidParam", child, err)
 	}
 	if r.hasHosts {
-		t.Fatal("router hasHosts = true after failed first HostErr, want false")
+		t.Fatal("router hasHosts = true after failed first TryHost, want false")
 	}
 
-	api, err := r.HostErr("api.example.com")
+	api, err := r.TryHost("api.example.com")
 	if err != nil {
-		t.Fatalf("HostErr valid host error = %v", err)
+		t.Fatalf("TryHost valid host error = %v", err)
 	}
 	api.Get("/", writeStatus(http.StatusAccepted))
 
 	var conflict *match.ConflictError
-	if child, err := r.HostErr("api.example.com"); !errors.As(err, &conflict) {
-		t.Fatalf("HostErr duplicate child, error = %v, %v; want *match.ConflictError", child, err)
+	if child, err := r.TryHost("api.example.com"); !errors.As(err, &conflict) {
+		t.Fatalf("TryHost duplicate child, error = %v, %v; want *match.ConflictError", child, err)
 	}
 
 	rec := httptest.NewRecorder()
@@ -2099,7 +2101,7 @@ func TestHostErrReturnsMatchErrors(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
-func TestHostErrRejectsEmptyNormalizedHost(t *testing.T) {
+func TestTryHostRejectsEmptyNormalizedHost(t *testing.T) {
 	tests := []string{
 		"",
 		":80",
@@ -2108,15 +2110,15 @@ func TestHostErrRejectsEmptyNormalizedHost(t *testing.T) {
 	for _, pattern := range tests {
 		t.Run(pattern, func(t *testing.T) {
 			r := New()
-			child, err := r.HostErr(pattern)
+			child, err := r.TryHost(pattern)
 			if !errors.Is(err, match.ErrInvalidParam) {
-				t.Fatalf("HostErr(%q) child, error = %v, %v; want ErrInvalidParam", pattern, child, err)
+				t.Fatalf("TryHost(%q) child, error = %v, %v; want ErrInvalidParam", pattern, child, err)
 			}
 			if child != nil {
-				t.Fatalf("HostErr(%q) child = %v, want nil", pattern, child)
+				t.Fatalf("TryHost(%q) child = %v, want nil", pattern, child)
 			}
 			if r.hasHosts {
-				t.Fatalf("HostErr(%q) set hasHosts = true, want false", pattern)
+				t.Fatalf("TryHost(%q) set hasHosts = true, want false", pattern)
 			}
 		})
 	}
