@@ -2,9 +2,10 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/ryanfowler/arc.svg)](https://pkg.go.dev/github.com/ryanfowler/arc)
 
-`arc` is a small HTTP router for Go applications that want route parameters,
-middleware groups, subrouters, mounted handlers, host-based routing, and clear
-method handling while staying close to [`net/http`](https://pkg.go.dev/net/http).
+`arc` is a minimal, high-performance HTTP router for Go applications that want
+route parameters, middleware groups, subrouters, mounted handlers, host-based
+routing, and clear method handling while staying close to
+[`net/http`](https://pkg.go.dev/net/http).
 
 Handlers are ordinary `http.Handler` and `http.HandlerFunc` values. Middleware
 is normal handler wrapping. A router is itself an `http.Handler`, so it can be
