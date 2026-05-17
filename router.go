@@ -1,11 +1,11 @@
 package arc
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -31,12 +31,6 @@ var ErrInvalidPathPattern = errors.New("path patterns must begin with /")
 // uses middleware a, b, and c, requests flow through a, then b, then c, then the
 // matched handler or fallback handler.
 type Middleware func(http.Handler) http.Handler
-
-// RequestParams is the parameter set captured while matching a request.
-//
-// RequestParams aliases match.Params, so application code can use match's Len,
-// At, Get, TryGet, Seq, AppendTo, and All methods directly.
-type RequestParams = match.Params
 
 // Router is an http.Handler that dispatches application requests by host, path,
 // and method.
@@ -64,10 +58,9 @@ type Router struct {
 	notFoundHandler         http.Handler
 	methodNotAllowedHandler http.Handler
 
-	strictSlash       bool
-	implicitHead      bool
-	requestPathValues bool
-	patternPrefix     string
+	strictSlash   bool
+	implicitHead  bool
+	patternPrefix string
 }
 
 type pathEntry struct {
@@ -98,19 +91,11 @@ type routeMethods struct {
 }
 
 type childRouter struct {
-	router  *Router
-	handler http.Handler
-	mounted bool
-	pattern string
-}
-
-type routerHandler struct {
-	router *Router
-}
-
-func (h routerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	path, params, decodeParams := dispatchState(req)
-	h.router.serve(w, req, path, params, decodeParams)
+	router     *Router
+	handler    http.Handler
+	middleware []Middleware
+	mounted    bool
+	pattern    string
 }
 
 // New creates a Router with defaults suitable for a typical net/http
@@ -184,19 +169,6 @@ func (r *Router) SetStrictSlash(strict bool) {
 	r.strictSlash = strict
 }
 
-// SetRequestPathValues controls whether captured parameters are mirrored to
-// http.Request.PathValue.
-//
-// Request path values are disabled by default. Enable this when middleware or
-// handlers need to read route parameters with req.PathValue instead of arc.Param
-// or arc.Params.
-//
-// Subrouters and host routers copy this setting when they are created. Later
-// changes on the parent do not affect existing children.
-func (r *Router) SetRequestPathValues(enabled bool) {
-	r.requestPathValues = enabled
-}
-
 func defaultMethodNotAllowed(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusMethodNotAllowed)
 }
@@ -236,11 +208,6 @@ func (r *Router) Use(mw ...Middleware) {
 // ServeHTTP satisfies http.Handler. It should usually be called by net/http
 // rather than directly.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if path, ok := dispatchPath(req); ok {
-		r.serve(w, req, path, Params(req), dispatchDecodeParams(req))
-		return
-	}
-
 	path := req.URL.Path
 	decodeParams := false
 	if hasEscapedSlash(req.URL.RawPath) {
@@ -257,7 +224,7 @@ func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, pa
 		return
 	}
 
-	r.notFoundHandler.ServeHTTP(w, requestForHandler(req, params, "", r.requestPathValues))
+	r.notFoundHandler.ServeHTTP(w, requestForHandler(req, params, ""))
 }
 
 func (r *Router) serveHost(w http.ResponseWriter, req *http.Request, path string, params match.Params, decodeParams bool) bool {
@@ -391,11 +358,11 @@ func (r *Router) serveRouteMethods(w http.ResponseWriter, req *http.Request, met
 	route := methods.routeFor(req.Method, r.implicitHead)
 	if route == nil {
 		w.Header().Set("Allow", methods.allowHeader(r.implicitHead))
-		r.methodNotAllowedHandler.ServeHTTP(w, requestForHandler(req, params, methods.pattern, r.requestPathValues))
+		r.methodNotAllowedHandler.ServeHTTP(w, requestForHandler(req, params, methods.pattern))
 		return
 	}
 
-	route.handler.ServeHTTP(w, requestForHandler(req, params, route.pattern, r.requestPathValues))
+	route.handler.ServeHTTP(w, requestForHandler(req, params, route.pattern))
 }
 
 func (r *Router) relaxedSlashPath(path string) (string, bool) {
@@ -627,6 +594,16 @@ func compose(h http.Handler, middleware []Middleware) http.Handler {
 	return h
 }
 
+func serveWithMiddleware(w http.ResponseWriter, req *http.Request, h http.Handler, middleware []Middleware) {
+	if len(middleware) == 0 {
+		h.ServeHTTP(w, req)
+		return
+	}
+	// Child router and mount dispatch state is carried on the call stack, so the
+	// final handler is request-specific.
+	compose(h, middleware).ServeHTTP(w, req)
+}
+
 func (r *Router) compileFallbacks() {
 	r.notFoundHandler = compose(r.notFound, r.middleware)
 	r.methodNotAllowedHandler = compose(r.methodNotAllowed, r.middleware)
@@ -638,22 +615,36 @@ func newChildRouter(parent *Router) *childRouter {
 	r.SetMethodNotAllowed(parent.methodNotAllowed)
 	r.SetStrictSlash(parent.strictSlash)
 	r.SetImplicitHead(parent.implicitHead)
-	r.SetRequestPathValues(parent.requestPathValues)
 	r.patternPrefix = parent.patternPrefix
-	child := &childRouter{router: r}
-	if len(parent.middleware) > 0 {
-		child.handler = compose(routerHandler{router: r}, parent.middleware)
+	return &childRouter{
+		router:     r,
+		middleware: slices.Clone(parent.middleware),
 	}
-	return child
 }
 
 func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path string, params match.Params, decodeParams bool) {
+	if params.Len() != 0 {
+		setPathValues(req, params)
+	}
+
 	if c.mounted {
-		c.handler.ServeHTTP(w, requestForMount(req, path, params, c.pattern, c.router.requestPathValues, decodeParams))
+		req.Pattern = c.pattern
+		mountPath := path
+		if decodeParams {
+			mountPath = decodedMatchPath(mountPath)
+		}
+		final := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			c.handler.ServeHTTP(w, requestWithURLPath(req, mountPath))
+		})
+		serveWithMiddleware(w, req, final, c.middleware)
 		return
 	}
-	if c.handler != nil {
-		c.handler.ServeHTTP(w, requestForRouter(req, path, params, c.router.requestPathValues, decodeParams))
+
+	if len(c.middleware) > 0 {
+		final := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			c.router.serve(w, req, path, params, decodeParams)
+		})
+		serveWithMiddleware(w, req, final, c.middleware)
 		return
 	}
 	c.router.serve(w, req, path, params, decodeParams)
@@ -734,39 +725,12 @@ func lowercasePatternLiterals(pattern string) string {
 	return b.String()
 }
 
-func requestForHandler(req *http.Request, params match.Params, pattern string, requestPathValues bool) *http.Request {
-	if params.Len() == 0 {
-		req.Pattern = pattern
-		return req
+func requestForHandler(req *http.Request, params match.Params, pattern string) *http.Request {
+	req.Pattern = pattern
+	if params.Len() != 0 {
+		setPathValues(req, params)
 	}
-
-	return requestWithMatchState(req, requestMatchState{
-		params:            params,
-		pattern:           pattern,
-		flags:             requestMatchPattern,
-		requestPathValues: requestPathValues,
-	})
-}
-
-func requestForRouter(req *http.Request, path string, params match.Params, requestPathValues bool, decodeParams bool) *http.Request {
-	return requestWithMatchState(req, requestMatchState{
-		params:            params,
-		dispatchPath:      path,
-		decodeParams:      decodeParams,
-		flags:             requestMatchDispatchPath,
-		requestPathValues: requestPathValues,
-	})
-}
-
-func requestForMount(req *http.Request, path string, params match.Params, pattern string, requestPathValues bool, decodeParams bool) *http.Request {
-	return requestWithMatchState(req, requestMatchState{
-		params:            params,
-		dispatchPath:      path,
-		pattern:           pattern,
-		decodeParams:      decodeParams,
-		flags:             requestMatchDispatchPath | requestMatchPattern,
-		requestPathValues: requestPathValues,
-	})
+	return req
 }
 
 func requestWithURLPath(req *http.Request, path string) *http.Request {
@@ -781,184 +745,6 @@ func requestWithURLPath(req *http.Request, path string) *http.Request {
 	url.RawPath = ""
 	next.URL = &url
 	return next
-}
-
-type requestContextKey int
-
-const (
-	requestParamsKey requestContextKey = iota
-	requestDispatchKey
-	requestDecodeParamsKey
-	requestStateKey
-)
-
-type requestMatchFlag uint8
-
-const (
-	requestMatchPattern requestMatchFlag = 1 << iota
-	requestMatchDispatchPath
-)
-
-type requestMatchState struct {
-	params            match.Params
-	dispatchPath      string
-	pattern           string
-	decodeParams      bool
-	flags             requestMatchFlag
-	requestPathValues bool
-}
-
-// requestWithMatchState is the only place that decides whether a matched
-// request needs arc state, a shallow request copy for PathValue updates, or no
-// clone at all.
-func requestWithMatchState(req *http.Request, state requestMatchState) *http.Request {
-	if state.flags&requestMatchDispatchPath == 0 && state.params.Len() == 0 && !state.decodeParams {
-		if state.flags&requestMatchPattern != 0 {
-			req.Pattern = state.pattern
-		}
-		return req
-	}
-
-	if !state.requestPathValues && !requestHasArcState(req.Context()) {
-		next := requestWithState(req, requestState{
-			params:       state.params,
-			path:         state.dispatchPath,
-			decodeParams: state.decodeParams,
-			flags: requestStateFlags(
-				state.params.Len() != 0,
-				state.flags&requestMatchDispatchPath != 0,
-				state.decodeParams,
-			),
-		})
-		if state.flags&requestMatchPattern != 0 {
-			next.Pattern = state.pattern
-		}
-		return next
-	}
-
-	paramsMatch := paramsEqual(Params(req), state.params)
-	pathValuesMatch := requestPathValuesMatch(req, state.params, state.requestPathValues)
-	dispatchPathMatch := true
-	if state.flags&requestMatchDispatchPath != 0 {
-		currentPath, ok := dispatchPath(req)
-		dispatchPathMatch = ok && currentPath == state.dispatchPath
-	}
-	decodeParamsMatch := dispatchDecodeParams(req) == state.decodeParams
-
-	if paramsMatch && pathValuesMatch && dispatchPathMatch && decodeParamsMatch {
-		if state.flags&requestMatchPattern != 0 {
-			req.Pattern = state.pattern
-		}
-		return req
-	}
-
-	next := requestWithState(req, requestState{
-		params:       state.params,
-		path:         state.dispatchPath,
-		decodeParams: state.decodeParams,
-		flags:        requestStateFlags(!paramsMatch, !dispatchPathMatch, !decodeParamsMatch && state.decodeParams),
-		copyRequest:  !pathValuesMatch,
-	})
-	if !pathValuesMatch {
-		setPathValues(next, state.params)
-	}
-	if state.flags&requestMatchPattern != 0 {
-		next.Pattern = state.pattern
-	}
-	return next
-}
-
-type requestStateFlag uint8
-
-const (
-	requestStateParams requestStateFlag = 1 << iota
-	requestStateDispatchPath
-	requestStateDecodeParams
-)
-
-type requestState struct {
-	params       match.Params
-	path         string
-	decodeParams bool
-	flags        requestStateFlag
-	copyRequest  bool
-}
-
-// requestStateContext keeps all arc request state in one wrapper. Flags mark
-// which fields override any older arc state below it in the context chain.
-type requestStateContext struct {
-	context.Context
-	params       match.Params
-	path         string
-	decodeParams bool
-	flags        requestStateFlag
-}
-
-func (ctx *requestStateContext) Value(key any) any {
-	switch key {
-	case requestParamsKey:
-		if ctx.flags&requestStateParams != 0 {
-			return ctx.params
-		}
-	case requestDispatchKey:
-		if ctx.flags&requestStateDispatchPath != 0 {
-			return ctx.path
-		}
-	case requestDecodeParamsKey:
-		if ctx.flags&requestStateDecodeParams != 0 {
-			return ctx.decodeParams
-		}
-	case requestStateKey:
-		return true
-	}
-	return ctx.Context.Value(key)
-}
-
-func requestStateFlags(withParams, withPath, withDecodeParams bool) requestStateFlag {
-	var flags requestStateFlag
-	if withParams {
-		flags |= requestStateParams
-	}
-	if withPath {
-		flags |= requestStateDispatchPath
-	}
-	if withDecodeParams {
-		flags |= requestStateDecodeParams
-	}
-	return flags
-}
-
-func requestWithState(req *http.Request, state requestState) *http.Request {
-	if state.flags == 0 {
-		if state.copyRequest {
-			return req.WithContext(req.Context())
-		}
-		return req
-	}
-	return req.WithContext(&requestStateContext{
-		Context:      req.Context(),
-		params:       state.params,
-		path:         state.path,
-		decodeParams: state.decodeParams,
-		flags:        state.flags,
-	})
-}
-
-func dispatchState(req *http.Request) (string, match.Params, bool) {
-	path, decodeParams := dispatchPathState(req)
-	return path, Params(req), decodeParams
-}
-
-func dispatchPathState(req *http.Request) (string, bool) {
-	path, ok := dispatchPath(req)
-	decodeParams := dispatchDecodeParams(req)
-	if !ok {
-		path = req.URL.Path
-		if hasEscapedSlash(req.URL.RawPath) {
-			path, decodeParams = escapedSlashMatchPath(req)
-		}
-	}
-	return path, decodeParams
 }
 
 func escapedSlashMatchPath(req *http.Request) (string, bool) {
@@ -1406,119 +1192,6 @@ func restoreParams(params match.Params) match.Params {
 
 func decodedMatchPath(path string) string {
 	return restoreEscapedSlash(path)
-}
-
-func dispatchPath(req *http.Request) (string, bool) {
-	return dispatchPathFromContext(req.Context())
-}
-
-func dispatchDecodeParams(req *http.Request) bool {
-	decode, _ := decodeParamsFromContext(req.Context())
-	return decode
-}
-
-func requestHasArcState(ctx context.Context) bool {
-	hasState, _ := ctx.Value(requestStateKey).(bool)
-	return hasState
-}
-
-// Params returns the parameters captured while matching req.
-//
-// The returned value is empty when the request did not match a parameterized
-// host, subrouter, mounted handler, or route. If the same parameter name is
-// captured at multiple levels, the more specific match wins: route parameters
-// override subrouter parameters, and subrouter parameters override host
-// parameters.
-func Params(req *http.Request) RequestParams {
-	params, _ := paramsFromContext(req.Context())
-	return params
-}
-
-func paramsFromContext(ctx context.Context) (match.Params, bool) {
-	for {
-		switch current := ctx.(type) {
-		case *requestStateContext:
-			if current.flags&requestStateParams != 0 {
-				return current.params, true
-			}
-			ctx = current.Context
-			continue
-		default:
-			params, ok := ctx.Value(requestParamsKey).(RequestParams)
-			return params, ok
-		}
-	}
-}
-
-func dispatchPathFromContext(ctx context.Context) (string, bool) {
-	for {
-		switch current := ctx.(type) {
-		case *requestStateContext:
-			if current.flags&requestStateDispatchPath != 0 {
-				return current.path, true
-			}
-			ctx = current.Context
-			continue
-		default:
-			path, ok := ctx.Value(requestDispatchKey).(string)
-			return path, ok
-		}
-	}
-}
-
-func decodeParamsFromContext(ctx context.Context) (bool, bool) {
-	for {
-		switch current := ctx.(type) {
-		case *requestStateContext:
-			if current.flags&requestStateDecodeParams != 0 {
-				return current.decodeParams, true
-			}
-			ctx = current.Context
-			continue
-		default:
-			decode, ok := ctx.Value(requestDecodeParamsKey).(bool)
-			return decode, ok
-		}
-	}
-}
-
-// Param returns one named parameter captured while matching req.
-//
-// Param returns an empty string when name was not captured. Use Params(req).
-// TryGet when callers need to distinguish a missing parameter from a captured
-// empty string, although arc's underlying matcher captures only non-empty
-// values.
-func Param(req *http.Request, name string) string {
-	return Params(req).Get(name)
-}
-
-func paramsEqual(a, b match.Params) bool {
-	if a.Len() != b.Len() {
-		return false
-	}
-	for i := 0; i < a.Len(); i++ {
-		if a.At(i) != b.At(i) {
-			return false
-		}
-	}
-	return true
-}
-
-func requestPathValuesMatch(req *http.Request, params match.Params, enabled bool) bool {
-	if !enabled {
-		return true
-	}
-	return pathValuesEqual(req, params)
-}
-
-func pathValuesEqual(req *http.Request, params match.Params) bool {
-	for i := 0; i < params.Len(); i++ {
-		param := params.At(i)
-		if req.PathValue(param.Key) != param.Val {
-			return false
-		}
-	}
-	return true
 }
 
 func setPathValues(req *http.Request, params match.Params) {

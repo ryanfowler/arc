@@ -16,8 +16,8 @@ var normalizeHostSink string
 func TestRouterMatchesRouteAndParams(t *testing.T) {
 	r := New()
 	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -30,7 +30,7 @@ func TestRouterMatchesRouteAndParams(t *testing.T) {
 	}
 }
 
-func TestRouterMatchesStaticBeforeParam(t *testing.T) {
+func TestRouterMatchesStaticBeforeParameterizedRoute(t *testing.T) {
 	r := New()
 	r.Get("/users/me", writeStatus(http.StatusAccepted))
 	r.Get("/users/{id}", writeStatus(http.StatusNoContent))
@@ -44,8 +44,8 @@ func TestRouterMatchesStaticBeforeParam(t *testing.T) {
 func TestRouterMatchesCatchAll(t *testing.T) {
 	r := New()
 	r.Get("/assets/{*path}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "path"); got != "css/app.css" {
-			t.Fatalf("Param(path) = %q, want %q", got, "css/app.css")
+		if got := req.PathValue("path"); got != "css/app.css" {
+			t.Fatalf("PathValue(path) = %q, want %q", got, "css/app.css")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -59,13 +59,12 @@ func TestRouterMatchesCatchAll(t *testing.T) {
 func TestRouterMatchesEscapedSlashWithinSegment(t *testing.T) {
 	t.Run("single segment route matches", func(t *testing.T) {
 		r := New()
-		r.SetRequestPathValues(true)
 		r.Get("/files/{name}", func(w http.ResponseWriter, req *http.Request) {
 			if got := req.URL.Path; got != "/files/a/b" {
 				t.Fatalf("req.URL.Path = %q, want %q", got, "/files/a/b")
 			}
-			if got := Param(req, "name"); got != "a/b" {
-				t.Fatalf("Param(name) = %q, want %q", got, "a/b")
+			if got := req.PathValue("name"); got != "a/b" {
+				t.Fatalf("PathValue(name) = %q, want %q", got, "a/b")
 			}
 			if got := req.PathValue("name"); got != "a/b" {
 				t.Fatalf("req.PathValue(name) = %q, want %q", got, "a/b")
@@ -85,8 +84,8 @@ func TestRouterMatchesEscapedSlashWithinSegment(t *testing.T) {
 			if got := req.URL.Path; got != "/files/a/b" {
 				t.Fatalf("req.URL.Path = %q, want %q", got, "/files/a/b")
 			}
-			if got := Param(req, "path"); got != "a/b" {
-				t.Fatalf("Param(path) = %q, want %q", got, "a/b")
+			if got := req.PathValue("path"); got != "a/b" {
+				t.Fatalf("PathValue(path) = %q, want %q", got, "a/b")
 			}
 			w.WriteHeader(http.StatusAccepted)
 		})
@@ -102,8 +101,8 @@ func TestRouterMatchesEscapedSlashWithDecodedStaticSegments(t *testing.T) {
 	t.Run("decoded space segment", func(t *testing.T) {
 		r := New()
 		r.Get("/files/{name}/meta data", func(w http.ResponseWriter, req *http.Request) {
-			if got := Param(req, "name"); got != "a/b" {
-				t.Fatalf("Param(name) = %q, want %q", got, "a/b")
+			if got := req.PathValue("name"); got != "a/b" {
+				t.Fatalf("PathValue(name) = %q, want %q", got, "a/b")
 			}
 			w.WriteHeader(http.StatusAccepted)
 		})
@@ -117,8 +116,8 @@ func TestRouterMatchesEscapedSlashWithDecodedStaticSegments(t *testing.T) {
 	t.Run("decoded literal braces segment", func(t *testing.T) {
 		r := New()
 		r.Get("/files/{name}/{{meta}}", func(w http.ResponseWriter, req *http.Request) {
-			if got := Param(req, "name"); got != "a/b" {
-				t.Fatalf("Param(name) = %q, want %q", got, "a/b")
+			if got := req.PathValue("name"); got != "a/b" {
+				t.Fatalf("PathValue(name) = %q, want %q", got, "a/b")
 			}
 			w.WriteHeader(http.StatusAccepted)
 		})
@@ -132,11 +131,11 @@ func TestRouterMatchesEscapedSlashWithDecodedStaticSegments(t *testing.T) {
 	t.Run("literal nul stays distinct from escaped slash", func(t *testing.T) {
 		r := New()
 		r.Get("/files/{name}/{slug}", func(w http.ResponseWriter, req *http.Request) {
-			if got := Param(req, "name"); got != "a\x00b" {
-				t.Fatalf("Param(name) = %q, want %q", got, "a\x00b")
+			if got := req.PathValue("name"); got != "a\x00b" {
+				t.Fatalf("PathValue(name) = %q, want %q", got, "a\x00b")
 			}
-			if got := Param(req, "slug"); got != "c/d" {
-				t.Fatalf("Param(slug) = %q, want %q", got, "c/d")
+			if got := req.PathValue("slug"); got != "c/d" {
+				t.Fatalf("PathValue(slug) = %q, want %q", got, "c/d")
 			}
 			w.WriteHeader(http.StatusAccepted)
 		})
@@ -211,8 +210,8 @@ func TestRouterDoesNotMatchStaticRouteWithEscapedSlash(t *testing.T) {
 func TestRouterDecodesEscapedParamValue(t *testing.T) {
 	r := New()
 	r.Get("/search/{query}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "query"); got != "what's up" {
-			t.Fatalf("Param(query) = %q, want %q", got, "what's up")
+		if got := req.PathValue("query"); got != "what's up" {
+			t.Fatalf("PathValue(query) = %q, want %q", got, "what's up")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -226,8 +225,8 @@ func TestRouterDecodesEscapedParamValue(t *testing.T) {
 func TestRouterUsesDecodedPathWhenRawPathHasNoEscapedSlash(t *testing.T) {
 	r := New()
 	r.Get("/search/{query}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "query"); got != "what's up" {
-			t.Fatalf("Param(query) = %q, want %q", got, "what's up")
+		if got := req.PathValue("query"); got != "what's up" {
+			t.Fatalf("PathValue(query) = %q, want %q", got, "what's up")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -290,8 +289,8 @@ func TestRouterRelaxedSlashMatchesTrailingSlash(t *testing.T) {
 	r := New()
 	r.SetStrictSlash(false)
 	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
 		}
 		if got := req.URL.Path; got != "/users/42/" {
 			t.Fatalf("URL.Path = %q, want %q", got, "/users/42/")
@@ -343,8 +342,8 @@ func TestRouterRelaxedSlashReturnsMethodNotAllowed(t *testing.T) {
 	r := New()
 	r.SetStrictSlash(false)
 	r.SetMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusConflict)
 	}))
@@ -493,8 +492,8 @@ func TestRouterMethodNotAllowedAllowHeaderDoesNotDuplicateExplicitHead(t *testin
 func TestRouterMethodNotAllowedPassesRouteParams(t *testing.T) {
 	r := New()
 	r.SetMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusConflict)
 	}))
@@ -956,11 +955,11 @@ func TestSubRouterMatchesAndMergesParams(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api/{version}")
 	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "version"); got != "v1" {
-			t.Fatalf("Param(version) = %q, want %q", got, "v1")
+		if got := req.PathValue("version"); got != "v1" {
+			t.Fatalf("PathValue(version) = %q, want %q", got, "v1")
 		}
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -977,11 +976,11 @@ func TestSubRouterMountParamCanUseFormerRestName(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api/{__arc_rest}")
 	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "__arc_rest"); got != "v1" {
-			t.Fatalf("Param(__arc_rest) = %q, want %q", got, "v1")
+		if got := req.PathValue("__arc_rest"); got != "v1" {
+			t.Fatalf("PathValue(__arc_rest) = %q, want %q", got, "v1")
 		}
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -1043,8 +1042,8 @@ func TestSubRouterInheritsStrictSlashSetting(t *testing.T) {
 	r.SetStrictSlash(false)
 	api := r.SubRouter("/api")
 	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -1164,8 +1163,8 @@ func TestParentParamRouteWinsOverSubRouterUnderSamePrefix(t *testing.T) {
 	api := r.SubRouter("/api")
 	api.Get("/{id}", writeStatus(http.StatusGone))
 	r.Get("/api/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -1223,17 +1222,17 @@ func TestSubRouterCanConfigureFallbackHandlers(t *testing.T) {
 func TestSubRouterFallbacksReceiveMergedParams(t *testing.T) {
 	r := New()
 	r.SetNotFound(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "version"); got != "v1" {
-			t.Fatalf("not found Param(version) = %q, want %q", got, "v1")
+		if got := req.PathValue("version"); got != "v1" {
+			t.Fatalf("not found PathValue(version) = %q, want %q", got, "v1")
 		}
 		w.WriteHeader(http.StatusTeapot)
 	}))
 	r.SetMethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "version"); got != "v1" {
-			t.Fatalf("method not allowed Param(version) = %q, want %q", got, "v1")
+		if got := req.PathValue("version"); got != "v1" {
+			t.Fatalf("method not allowed PathValue(version) = %q, want %q", got, "v1")
 		}
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("method not allowed Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("method not allowed PathValue(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusConflict)
 	}))
@@ -1253,8 +1252,8 @@ func TestRootSubRouterMatchesAllPaths(t *testing.T) {
 	r := New()
 	root := r.SubRouter("/")
 	root.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -1384,8 +1383,8 @@ func TestSubRouterDoesNotRewriteRequestPath(t *testing.T) {
 	api.Use(pathMiddleware("child", &paths))
 	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
 		paths = append(paths, "handler:"+req.URL.Path)
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -1412,8 +1411,8 @@ func TestNestedSubRoutersMergeParams(t *testing.T) {
 			"user":    "42",
 		}
 		for key, val := range want {
-			if got := Param(req, key); got != val {
-				t.Fatalf("Param(%s) = %q, want %q", key, got, val)
+			if got := req.PathValue(key); got != val {
+				t.Fatalf("PathValue(%s) = %q, want %q", key, got, val)
 			}
 		}
 		w.WriteHeader(http.StatusAccepted)
@@ -1429,11 +1428,11 @@ func TestSubRouterMatchesEscapedSlashWithinSegment(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api/{version}")
 	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "version"); got != "v1/beta" {
-			t.Fatalf("Param(version) = %q, want %q", got, "v1/beta")
+		if got := req.PathValue("version"); got != "v1/beta" {
+			t.Fatalf("PathValue(version) = %q, want %q", got, "v1/beta")
 		}
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -1448,8 +1447,8 @@ func TestSubRouterMatchesEscapedSlashWithDecodedStaticSegment(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api/{version}")
 	api.Get("/meta data", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "version"); got != "v1/beta" {
-			t.Fatalf("Param(version) = %q, want %q", got, "v1/beta")
+		if got := req.PathValue("version"); got != "v1/beta" {
+			t.Fatalf("PathValue(version) = %q, want %q", got, "v1/beta")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -1475,8 +1474,8 @@ func TestSubRouterChildRouteEnablesEscapedSlashMatching(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api")
 	api.Get("/files/{name}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "name"); got != "a/b" {
-			t.Fatalf("Param(name) = %q, want %q", got, "a/b")
+		if got := req.PathValue("name"); got != "a/b" {
+			t.Fatalf("PathValue(name) = %q, want %q", got, "a/b")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -1491,8 +1490,8 @@ func TestSubRouterCatchAllMount(t *testing.T) {
 	r := New()
 	files := r.SubRouter("/files/{*path}")
 	files.Get("/", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "path"); got != "css/app.css" {
-			t.Fatalf("Param(path) = %q, want %q", got, "css/app.css")
+		if got := req.PathValue("path"); got != "css/app.css" {
+			t.Fatalf("PathValue(path) = %q, want %q", got, "css/app.css")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -1548,8 +1547,8 @@ func TestSubRouterMountWithSegmentAffixes(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api/v{version}.json")
 	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "version"); got != "1" {
-			t.Fatalf("Param(version) = %q, want %q", got, "1")
+		if got := req.PathValue("version"); got != "1" {
+			t.Fatalf("PathValue(version) = %q, want %q", got, "1")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -1605,8 +1604,8 @@ func TestSubRouterBacktracksAcrossParamMounts(t *testing.T) {
 
 	foo.Get("/", writeStatus(http.StatusAccepted))
 	bar.Get("/", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "section"); got != "api" {
-			t.Fatalf("Param(section) = %q, want %q", got, "api")
+		if got := req.PathValue("section"); got != "api" {
+			t.Fatalf("PathValue(section) = %q, want %q", got, "api")
 		}
 		w.WriteHeader(http.StatusCreated)
 	})
@@ -1624,11 +1623,11 @@ func TestSubRouterBacktracksAcrossDifferentlyNamedParamMounts(t *testing.T) {
 
 	foo.Get("/", writeStatus(http.StatusAccepted))
 	bar.Get("/", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "name"); got != "abc" {
-			t.Fatalf("Param(name) = %q, want %q", got, "abc")
+		if got := req.PathValue("name"); got != "abc" {
+			t.Fatalf("PathValue(name) = %q, want %q", got, "abc")
 		}
-		if got := Param(req, "id"); got != "" {
-			t.Fatalf("Param(id) = %q, want empty", got)
+		if got := req.PathValue("id"); got != "" {
+			t.Fatalf("PathValue(id) = %q, want empty", got)
 		}
 		w.WriteHeader(http.StatusCreated)
 	})
@@ -1648,8 +1647,8 @@ func TestMountDispatchesHandlerWithRemainingPathAndParams(t *testing.T) {
 		if got := req.URL.Query().Get("v"); got != "1" {
 			t.Fatalf("query v = %q, want %q", got, "1")
 		}
-		if got := Param(req, "tenant"); got != "acme" {
-			t.Fatalf("Param(tenant) = %q, want %q", got, "acme")
+		if got := req.PathValue("tenant"); got != "acme" {
+			t.Fatalf("PathValue(tenant) = %q, want %q", got, "acme")
 		}
 		if got := req.PathValue("tenant"); got != "acme" {
 			t.Fatalf("req.PathValue(tenant) = %q, want %q", got, "acme")
@@ -1659,7 +1658,6 @@ func TestMountDispatchesHandlerWithRemainingPathAndParams(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusAccepted)
 	}))
-	r.SetRequestPathValues(true)
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tenants/acme/assets/css/app.css?v=1", nil))
@@ -1670,8 +1668,8 @@ func TestMountDispatchesHandlerWithRemainingPathAndParams(t *testing.T) {
 func TestMountMatchesEscapedSlashWithinSegment(t *testing.T) {
 	r := New()
 	r.Mount("/assets/{name}", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "name"); got != "a/b" {
-			t.Fatalf("Param(name) = %q, want %q", got, "a/b")
+		if got := req.PathValue("name"); got != "a/b" {
+			t.Fatalf("PathValue(name) = %q, want %q", got, "a/b")
 		}
 		if got := req.URL.Path; got != "/app.css" {
 			t.Fatalf("req.URL.Path = %q, want %q", got, "/app.css")
@@ -1726,11 +1724,11 @@ func TestMountArcRouterPreservesMountParamsWithInnerRouteParams(t *testing.T) {
 		if got := req.URL.Path; got != "/users/42" {
 			t.Fatalf("req.URL.Path = %q, want %q", got, "/users/42")
 		}
-		if got := Param(req, "version"); got != "v1" {
-			t.Fatalf("Param(version) = %q, want %q", got, "v1")
+		if got := req.PathValue("version"); got != "v1" {
+			t.Fatalf("PathValue(version) = %q, want %q", got, "v1")
 		}
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -1885,11 +1883,11 @@ func TestHostRouterMatchesAndMergesParams(t *testing.T) {
 	r := New()
 	tenant := r.Host("{tenant}.example.com")
 	tenant.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "tenant"); got != "acme" {
-			t.Fatalf("Param(tenant) = %q, want %q", got, "acme")
+		if got := req.PathValue("tenant"); got != "acme" {
+			t.Fatalf("PathValue(tenant) = %q, want %q", got, "acme")
 		}
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -1909,11 +1907,11 @@ func TestHostRouterPreservesParamNameCase(t *testing.T) {
 	r := New()
 	tenant := r.Host("{Tenant}.Example.COM")
 	tenant.Get("/", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "Tenant"); got != "acme" {
-			t.Fatalf("Param(Tenant) = %q, want %q", got, "acme")
+		if got := req.PathValue("Tenant"); got != "acme" {
+			t.Fatalf("PathValue(Tenant) = %q, want %q", got, "acme")
 		}
-		if got := Param(req, "tenant"); got != "" {
-			t.Fatalf("Param(tenant) = %q, want empty", got)
+		if got := req.PathValue("tenant"); got != "" {
+			t.Fatalf("PathValue(tenant) = %q, want empty", got)
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -1933,8 +1931,8 @@ func TestHostRouterChildRouteEnablesEscapedSlashMatching(t *testing.T) {
 	r := New()
 	api := r.Host("api.example.com")
 	api.Get("/files/{name}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "name"); got != "a/b" {
-			t.Fatalf("Param(name) = %q, want %q", got, "a/b")
+		if got := req.PathValue("name"); got != "a/b" {
+			t.Fatalf("PathValue(name) = %q, want %q", got, "a/b")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -2122,8 +2120,8 @@ func TestHostRouterInheritsStrictSlashSetting(t *testing.T) {
 	r.SetStrictSlash(false)
 	api := r.Host("api.example.com")
 	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -2235,34 +2233,8 @@ func TestHostRouterSnapshotsParentMiddlewareAtRegistration(t *testing.T) {
 	assertStrings(t, calls, []string{"before before", "handler", "before after"})
 }
 
-func TestParamsReturnsRequestParams(t *testing.T) {
+func TestRouteParamsAreRequestPathValues(t *testing.T) {
 	r := New()
-	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		params := Params(req)
-		var _ match.Params = params
-		var _ RequestParams = params
-		if params.Get("id") != "42" {
-			t.Fatalf("Params(req).Get(id) = %q, want %q", params.Get("id"), "42")
-		}
-	})
-
-	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/42", nil))
-}
-
-func TestParamsDoNotSetRequestPathValuesByDefault(t *testing.T) {
-	r := New()
-	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := req.PathValue("id"); got != "" {
-			t.Fatalf("req.PathValue(id) = %q, want empty", got)
-		}
-	})
-
-	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/42", nil))
-}
-
-func TestParamsSetRequestPathValuesWhenEnabled(t *testing.T) {
-	r := New()
-	r.SetRequestPathValues(true)
 	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
 		if got := req.PathValue("id"); got != "42" {
 			t.Fatalf("req.PathValue(id) = %q, want %q", got, "42")
@@ -2403,14 +2375,11 @@ func TestRequestPatternEmptyForNotFound(t *testing.T) {
 	assertStatus(t, rec, http.StatusNotFound)
 }
 
-func TestParamsReturnsZeroValueWhenNoParams(t *testing.T) {
+func TestPathValueReturnsZeroValueWhenNoParams(t *testing.T) {
 	r := New()
 	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
-		if got := Params(req).Len(); got != 0 {
-			t.Fatalf("Params(req).Len() = %d, want 0", got)
-		}
-		if got := Param(req, "missing"); got != "" {
-			t.Fatalf("Param(missing) = %q, want empty", got)
+		if got := req.PathValue("missing"); got != "" {
+			t.Fatalf("PathValue(missing) = %q, want empty", got)
 		}
 	})
 
@@ -2419,7 +2388,6 @@ func TestParamsReturnsZeroValueWhenNoParams(t *testing.T) {
 
 func TestRequestPathValueMergePrecedence(t *testing.T) {
 	r := New()
-	r.SetRequestPathValues(true)
 	host := r.Host("{id}.example.com")
 	sub := host.SubRouter("/{id}")
 	sub.Get("/{id}", func(w http.ResponseWriter, req *http.Request) {
@@ -2435,71 +2403,9 @@ func TestRequestPathValueMergePrecedence(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
-func TestSubRouterSnapshotsRequestPathValueSetting(t *testing.T) {
-	r := New()
-	api := r.SubRouter("/api/{version}")
-	r.SetRequestPathValues(true)
-	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := req.PathValue("version"); got != "" {
-			t.Fatalf("req.PathValue(version) = %q, want empty", got)
-		}
-		if got := req.PathValue("id"); got != "" {
-			t.Fatalf("req.PathValue(id) = %q, want empty", got)
-		}
-		w.WriteHeader(http.StatusAccepted)
-	})
-
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/users/42", nil))
-
-	assertStatus(t, rec, http.StatusAccepted)
-}
-
-func TestHostRouterSnapshotsRequestPathValueSetting(t *testing.T) {
-	r := New()
-	api := r.Host("{tenant}.example.com")
-	r.SetRequestPathValues(true)
-	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := req.PathValue("tenant"); got != "" {
-			t.Fatalf("req.PathValue(tenant) = %q, want empty", got)
-		}
-		if got := req.PathValue("id"); got != "" {
-			t.Fatalf("req.PathValue(id) = %q, want empty", got)
-		}
-		w.WriteHeader(http.StatusAccepted)
-	})
-
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://acme.example.com/users/42", nil))
-
-	assertStatus(t, rec, http.StatusAccepted)
-}
-
-func TestSubRouterCanConfigureRequestPathValuesIndependently(t *testing.T) {
-	r := New()
-	r.SetRequestPathValues(true)
-	api := r.SubRouter("/api/{version}")
-	api.SetRequestPathValues(false)
-	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := req.PathValue("version"); got != "" {
-			t.Fatalf("req.PathValue(version) = %q, want empty", got)
-		}
-		if got := req.PathValue("id"); got != "" {
-			t.Fatalf("req.PathValue(id) = %q, want empty", got)
-		}
-		w.WriteHeader(http.StatusAccepted)
-	})
-
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/users/42", nil))
-
-	assertStatus(t, rec, http.StatusAccepted)
-}
-
 func TestRequestPathValueVisibleToSubRouterMiddleware(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api/{version}")
-	api.SetRequestPathValues(true)
 	api.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if got := req.PathValue("version"); got != "v1" {
@@ -2533,11 +2439,11 @@ func TestSubRouterDispatchSurvivesMiddlewareContextWrap(t *testing.T) {
 	})
 	api := r.SubRouter("/api/{version}")
 	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "version"); got != "v1" {
-			t.Fatalf("Param(version) = %q, want %q", got, "v1")
+		if got := req.PathValue("version"); got != "v1" {
+			t.Fatalf("PathValue(version) = %q, want %q", got, "v1")
 		}
-		if got := Param(req, "id"); got != "42" {
-			t.Fatalf("Param(id) = %q, want %q", got, "42")
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -2548,31 +2454,10 @@ func TestSubRouterDispatchSurvivesMiddlewareContextWrap(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
-func TestParamMergePrecedence(t *testing.T) {
-	r := New()
-	host := r.Host("{id}.example.com")
-	sub := host.SubRouter("/{id}")
-	sub.Get("/{id}", func(w http.ResponseWriter, req *http.Request) {
-		params := Params(req)
-		if got := params.Len(); got != 1 {
-			t.Fatalf("Params(req).Len() = %d, want 1", got)
-		}
-		if got := Param(req, "id"); got != "route" {
-			t.Fatalf("Param(id) = %q, want %q", got, "route")
-		}
-		w.WriteHeader(http.StatusAccepted)
-	})
-
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://host.example.com/sub/route", nil))
-
-	assertStatus(t, rec, http.StatusAccepted)
-}
-
 func TestRouterServesConcurrentRequestsAfterRegistration(t *testing.T) {
 	r := New()
 	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := Param(req, "id"); got == "" {
+		if got := req.PathValue("id"); got == "" {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}

@@ -118,18 +118,6 @@ func BenchmarkRouterServeHTTP(b *testing.B) {
 			new: func() (*Router, *http.Request) {
 				r := New()
 				r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-					benchmarkParam = Param(req, "id")
-					w.WriteHeader(http.StatusNoContent)
-				})
-				return r, httptest.NewRequest(http.MethodGet, "/users/42", nil)
-			},
-		},
-		{
-			name: "param_request_path_values",
-			new: func() (*Router, *http.Request) {
-				r := New()
-				r.SetRequestPathValues(true)
-				r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
 					benchmarkParam = req.PathValue("id")
 					w.WriteHeader(http.StatusNoContent)
 				})
@@ -141,7 +129,7 @@ func BenchmarkRouterServeHTTP(b *testing.B) {
 			new: func() (*Router, *http.Request) {
 				r := New()
 				r.Get("/assets/{*path}", func(w http.ResponseWriter, req *http.Request) {
-					benchmarkParam = Param(req, "path")
+					benchmarkParam = req.PathValue("path")
 					w.WriteHeader(http.StatusNoContent)
 				})
 				return r, httptest.NewRequest(http.MethodGet, "/assets/css/app.css", nil)
@@ -152,7 +140,7 @@ func BenchmarkRouterServeHTTP(b *testing.B) {
 			new: func() (*Router, *http.Request) {
 				r := New()
 				r.Get("/files/{name}", func(w http.ResponseWriter, req *http.Request) {
-					benchmarkParam = Param(req, "name")
+					benchmarkParam = req.PathValue("name")
 					w.WriteHeader(http.StatusNoContent)
 				})
 				return r, httptest.NewRequest(http.MethodGet, "/files/a%2Fb", nil)
@@ -163,7 +151,7 @@ func BenchmarkRouterServeHTTP(b *testing.B) {
 			new: func() (*Router, *http.Request) {
 				r := New()
 				r.Get("/files/{name}/meta data", func(w http.ResponseWriter, req *http.Request) {
-					benchmarkParam = Param(req, "name")
+					benchmarkParam = req.PathValue("name")
 					w.WriteHeader(http.StatusNoContent)
 				})
 				return r, httptest.NewRequest(http.MethodGet, "/files/a%2Fb/meta%20data", nil)
@@ -191,7 +179,7 @@ func BenchmarkRouterServeHTTP(b *testing.B) {
 				r := New()
 				api := r.SubRouter("/api/{version}")
 				api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-					benchmarkParam = Param(req, "id")
+					benchmarkParam = req.PathValue("id")
 					w.WriteHeader(http.StatusNoContent)
 				})
 				return r, httptest.NewRequest(http.MethodGet, "/api/v1/users/42", nil)
@@ -203,7 +191,7 @@ func BenchmarkRouterServeHTTP(b *testing.B) {
 				r := New()
 				tenant := r.Host("{tenant}.example.com")
 				tenant.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-					benchmarkParam = Param(req, "tenant")
+					benchmarkParam = req.PathValue("tenant")
 					w.WriteHeader(http.StatusNoContent)
 				})
 				return r, httptest.NewRequest(http.MethodGet, "http://acme.example.com/users/42", nil)
@@ -217,7 +205,7 @@ func BenchmarkRouterServeHTTP(b *testing.B) {
 					r.Use(benchmarkMiddleware)
 				}
 				r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-					benchmarkParam = Param(req, "id")
+					benchmarkParam = req.PathValue("id")
 					w.WriteHeader(http.StatusNoContent)
 				})
 				return r, httptest.NewRequest(http.MethodGet, "/users/42", nil)
@@ -259,7 +247,7 @@ func BenchmarkRouterServeHTTPRealWorld(b *testing.B) {
 					api.Get("/resources/"+strconv.Itoa(i), writeBenchmarkStatus(http.StatusNoContent))
 				}
 				api.Get("/users/{id}/projects/{projectID}", func(w http.ResponseWriter, req *http.Request) {
-					benchmarkParam = Param(req, "projectID")
+					benchmarkParam = req.PathValue("projectID")
 					w.WriteHeader(http.StatusNoContent)
 				})
 
@@ -319,7 +307,7 @@ func BenchmarkRouterServeHTTPEdgeCases(b *testing.B) {
 				r := New()
 				r.SetStrictSlash(false)
 				r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-					benchmarkParam = Param(req, "id")
+					benchmarkParam = req.PathValue("id")
 					w.WriteHeader(http.StatusNoContent)
 				})
 
@@ -343,7 +331,7 @@ func BenchmarkRouterServeHTTPEdgeCases(b *testing.B) {
 				r := New()
 				tenant := r.Host("{tenant}.example.com")
 				tenant.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-					benchmarkParam = Param(req, "tenant")
+					benchmarkParam = req.PathValue("tenant")
 					w.WriteHeader(http.StatusNoContent)
 				})
 
