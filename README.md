@@ -91,6 +91,7 @@ Route patterns use the `match` route grammar:
 - `/assets/{*path}` captures the non-empty remainder of the path.
 - Literal paths are preferred over parameter paths.
 - Catch-all parameters must appear at the end of the pattern.
+- Percent escapes in literal pattern text are decoded at registration.
 
 ```go
 r.Get("/users/me", currentUser)
@@ -100,6 +101,12 @@ r.Get("/assets/{*path}", serveAsset)
 
 In this example, `/users/me` uses `currentUser`, while `/users/42` uses
 `getUser`.
+
+Percent decoding does not apply inside parameter syntax. For example,
+`/files/meta%20data` is the same literal route as `/files/meta data`, and
+`/files/%7Bname%7D` matches a literal `{name}` path segment rather than
+capturing `name`. Encoded slashes stay inside their segment:
+`/files/a%2Fb` matches `/files/a%2Fb`, not `/files/a/b`.
 
 Trailing slashes are significant by default. A request for `/users/42/` does
 not match `/users/{id}` unless you relax slash matching:

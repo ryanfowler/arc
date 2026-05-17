@@ -55,7 +55,7 @@ func (r *Router) SubRouterErr(pattern string) (*Router, error) {
 	if err := validateHTTPPathPattern(pattern); err != nil {
 		return nil, err
 	}
-	matchPattern := normalizeEscapedSlashPattern(pattern)
+	matchPattern := normalizePercentEncodedPattern(pattern)
 
 	if err := validateUniqueParamNames(matchPattern); err != nil {
 		return nil, err
@@ -118,7 +118,7 @@ func (r *Router) MountErr(pattern string, h http.Handler) error {
 		mounted:    true,
 		pattern:    joinPatterns(r.patternPrefix, pattern),
 	}
-	matchPattern := normalizeEscapedSlashPattern(pattern)
+	matchPattern := normalizePercentEncodedPattern(pattern)
 	if err := validateUniqueParamNames(matchPattern); err != nil {
 		return err
 	}

@@ -25,7 +25,10 @@
 // github.com/ryanfowler/match grammar. Route, subrouter, and mount path
 // patterns must be absolute paths beginning with /. In paths, {name} captures
 // one non-empty segment and {*name} captures the non-empty remainder of the
-// path. Captured parameters are stored on the request and can be read with
+// path. Percent escapes in literal path pattern text are decoded at
+// registration, while escapes inside parameter syntax are left as part of the
+// parameter name. Decoded slashes remain inside their segment. Captured
+// parameters are stored on the request and can be read with
 // http.Request.PathValue.
 //
 // Arc also sets http.Request.Pattern for matched routes, mounted handlers, and
