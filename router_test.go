@@ -166,7 +166,7 @@ func TestRouterMatchesStaticEscapedSlashWithinSegment(t *testing.T) {
 	})
 }
 
-func TestRouterNormalizesEscapedSlashStaticPatterns(t *testing.T) {
+func TestRouterNormalizesPercentEncodedStaticPatterns(t *testing.T) {
 	tests := []struct {
 		name    string
 		pattern string
@@ -174,11 +174,26 @@ func TestRouterNormalizesEscapedSlashStaticPatterns(t *testing.T) {
 	}{
 		{
 			name:    "decoded space segment",
+			pattern: "/files/meta%20data",
+			path:    "/files/meta%20data",
+		},
+		{
+			name:    "decoded literal braces segment",
+			pattern: "/files/%7Bmeta%7D",
+			path:    "/files/%7Bmeta%7D",
+		},
+		{
+			name:    "decoded percent segment",
+			pattern: "/files/%25done",
+			path:    "/files/%25done",
+		},
+		{
+			name:    "escaped slash and decoded space segment",
 			pattern: "/files/a%2Fb/meta%20data",
 			path:    "/files/a%2Fb/meta%20data",
 		},
 		{
-			name:    "decoded literal braces segment",
+			name:    "escaped slash and decoded literal braces segment",
 			pattern: "/files/a%2Fb/%7Bmeta%7D",
 			path:    "/files/a%2Fb/%7Bmeta%7D",
 		},
@@ -191,6 +206,53 @@ func TestRouterNormalizesEscapedSlashStaticPatterns(t *testing.T) {
 
 			rec := httptest.NewRecorder()
 			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+
+			assertStatus(t, rec, http.StatusAccepted)
+		})
+	}
+}
+
+func TestRouterPercentEncodedStaticPatternConflictsWithDecodedPattern(t *testing.T) {
+	tests := []struct {
+		name    string
+		first   string
+		second  string
+		request string
+	}{
+		{
+			name:    "space",
+			first:   "/files/meta data",
+			second:  "/files/meta%20data",
+			request: "/files/meta%20data",
+		},
+		{
+			name:    "literal braces",
+			first:   "/files/{{meta}}",
+			second:  "/files/%7Bmeta%7D",
+			request: "/files/%7Bmeta%7D",
+		},
+		{
+			name:    "percent",
+			first:   "/files/%done",
+			second:  "/files/%25done",
+			request: "/files/%25done",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := New()
+			if err := r.HandleErr(tt.first, writeStatus(http.StatusAccepted)); err != nil {
+				t.Fatalf("HandleErr first route error = %v", err)
+			}
+
+			var conflict *match.ConflictError
+			if err := r.HandleErr(tt.second, writeStatus(http.StatusNoContent)); !errors.As(err, &conflict) {
+				t.Fatalf("HandleErr second route error = %v, want *match.ConflictError", err)
+			}
+
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.request, nil))
 
 			assertStatus(t, rec, http.StatusAccepted)
 		})
@@ -1470,6 +1532,22 @@ func TestSubRouterNormalizesEscapedSlashStaticPattern(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestSubRouterNormalizesPercentEncodedStaticPattern(t *testing.T) {
+	r := New()
+	api := r.SubRouter("/api/meta%20data")
+	api.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("id"); got != "42" {
+			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/meta%20data/users/42", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestSubRouterChildRouteEnablesEscapedSlashMatching(t *testing.T) {
 	r := New()
 	api := r.SubRouter("/api")
@@ -1694,6 +1772,21 @@ func TestMountNormalizesEscapedSlashStaticPattern(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/a%2Fb/meta%20data", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestMountNormalizesPercentEncodedStaticPattern(t *testing.T) {
+	r := New()
+	r.Mount("/assets/meta%20data", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if got := req.URL.Path; got != "/app.css" {
+			t.Fatalf("req.URL.Path = %q, want %q", got, "/app.css")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/meta%20data/app.css", nil))
 
 	assertStatus(t, rec, http.StatusAccepted)
 }

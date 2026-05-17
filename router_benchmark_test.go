@@ -54,6 +54,44 @@ func BenchmarkRouterHandle(b *testing.B) {
 	}
 }
 
+func BenchmarkNormalizePercentEncodedPattern(b *testing.B) {
+	benchmarks := []struct {
+		name    string
+		pattern string
+	}{
+		{
+			name:    "no_escape_static",
+			pattern: "/healthz",
+		},
+		{
+			name:    "no_escape_param",
+			pattern: "/users/{id}/posts/{postID}",
+		},
+		{
+			name:    "decoded_space",
+			pattern: "/files/meta%20data",
+		},
+		{
+			name:    "escaped_slash",
+			pattern: "/files/a%2Fb/meta%20data",
+		},
+		{
+			name:    "decoded_literal_braces",
+			pattern: "/files/%7Bmeta%7D",
+		},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			b.ReportAllocs()
+
+			for i := 0; i < b.N; i++ {
+				benchmarkParam = normalizePercentEncodedPattern(bm.pattern)
+			}
+		})
+	}
+}
+
 func BenchmarkValidateUniqueParamNames(b *testing.B) {
 	benchmarks := []struct {
 		name    string

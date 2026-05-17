@@ -818,8 +818,11 @@ func writeDecodedMatchChunk(b *strings.Builder, s string, escapeMarkers bool) {
 	}
 }
 
-func normalizeEscapedSlashPattern(pattern string) string {
-	if !hasEscapedSlashPattern(pattern) {
+// normalizePercentEncodedPattern decodes percent-encoded bytes in literal
+// pattern text. Parameter syntax is router grammar, so escapes inside params are
+// left alone; decoded slashes use the internal marker to stay within a segment.
+func normalizePercentEncodedPattern(pattern string) string {
+	if !hasPercentEncodedPattern(pattern) {
 		return pattern
 	}
 
@@ -897,7 +900,7 @@ func normalizeEscapedSlashPattern(pattern string) string {
 	return b.String()
 }
 
-func hasEscapedSlashPattern(pattern string) bool {
+func hasPercentEncodedPattern(pattern string) bool {
 	inParam := false
 	for i := 0; i < len(pattern); {
 		if inParam {
@@ -925,8 +928,12 @@ func hasEscapedSlashPattern(pattern string) bool {
 			inParam = true
 			i++
 		case '%':
-			if i+2 < len(pattern) && pattern[i+1] == '2' && (pattern[i+2] == 'f' || pattern[i+2] == 'F') {
-				return true
+			if i+2 < len(pattern) {
+				if _, ok := fromHex(pattern[i+1]); ok {
+					if _, ok := fromHex(pattern[i+2]); ok {
+						return true
+					}
+				}
 			}
 			i++
 		default:
