@@ -68,16 +68,16 @@ r.Delete("/users/{id}", deleteUser)
 ```
 
 The helpers accept `http.HandlerFunc`. If you already have an `http.Handler`,
-use `HandleMethod`:
+use `Handle`:
 
 ```go
-r.HandleMethod(http.MethodGet, "/status", statusHandler)
+r.Handle(http.MethodGet, "/status", statusHandler)
 ```
 
-Use `Handle` or `HandleFunc` for a route that should accept any method:
+Use `HandleAll` for a route that should accept any method:
 
 ```go
-r.Handle("/healthz", http.HandlerFunc(health))
+r.HandleAll("/healthz", http.HandlerFunc(health))
 ```
 
 When a path exists but the method does not match, `arc` returns
@@ -329,24 +329,24 @@ startup:
 r.Get("/users/{id}", getUser)
 ```
 
-Use the `Err` variants when routes come from configuration, plugins, or another
+Use the `Try` variants when routes come from configuration, plugins, or another
 runtime source:
 
 ```go
-if err := r.HandleMethodErr(http.MethodGet, "/users/{id}", http.HandlerFunc(getUser)); err != nil {
+if err := r.TryHandle(http.MethodGet, "/users/{id}", http.HandlerFunc(getUser)); err != nil {
 	return err
 }
 
-api, err := r.SubRouterErr("/api/{version}")
+api, err := r.TrySubRouter("/api/{version}")
 if err != nil {
 	return err
 }
 
-if err := r.MountErr("/assets", http.FileServerFS(assets)); err != nil {
+if err := r.TryMount("/assets", http.FileServerFS(assets)); err != nil {
 	return err
 }
 
-tenant, err := r.HostErr("{tenant}.example.com")
+tenant, err := r.TryHost("{tenant}.example.com")
 if err != nil {
 	return err
 }

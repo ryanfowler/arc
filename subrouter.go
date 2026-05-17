@@ -33,23 +33,23 @@ import (
 // implicit HEAD, and fallback handler settings when it is created.
 //
 // Invalid, duplicate, or ambiguous mount patterns panic with the error returned
-// by match. Use SubRouterErr to receive the registration error instead.
+// by match. Use TrySubRouter to receive the registration error instead.
 func (r *Router) SubRouter(pattern string) *Router {
-	child, err := r.SubRouterErr(pattern)
+	child, err := r.TrySubRouter(pattern)
 	if err != nil {
 		panic(err)
 	}
 	return child
 }
 
-// SubRouterErr registers and returns a child router mounted at pattern and
+// TrySubRouter registers and returns a child router mounted at pattern and
 // returns registration errors.
 //
 // The pattern uses the github.com/ryanfowler/match route grammar. An empty
 // pattern is treated as /. Registration errors include non-absolute path
 // patterns, invalid parameter syntax, duplicate parameter names within the
 // pattern, and mount conflicts reported by match.
-func (r *Router) SubRouterErr(pattern string) (*Router, error) {
+func (r *Router) TrySubRouter(pattern string) (*Router, error) {
 	child := newChildRouter(r)
 	pattern = cleanMountPattern(pattern)
 	if err := validateHTTPPathPattern(pattern); err != nil {
@@ -88,21 +88,21 @@ func (r *Router) SubRouterErr(pattern string) (*Router, error) {
 // are owned by the mounted handler.
 //
 // Invalid, duplicate, or ambiguous mount patterns panic with the error returned
-// by match. Use MountErr to receive the registration error instead.
+// by match. Use TryMount to receive the registration error instead.
 func (r *Router) Mount(pattern string, h http.Handler) {
-	if err := r.MountErr(pattern, h); err != nil {
+	if err := r.TryMount(pattern, h); err != nil {
 		panic(err)
 	}
 }
 
-// MountErr registers h below pattern and returns registration errors.
+// TryMount registers h below pattern and returns registration errors.
 //
 // The pattern uses the github.com/ryanfowler/match route grammar. An empty
 // pattern is treated as /. Registration errors include non-absolute path
 // patterns, invalid parameter syntax, duplicate parameter names within the
 // pattern, and mount conflicts reported by match. A nil handler is treated as
 // http.NotFoundHandler.
-func (r *Router) MountErr(pattern string, h http.Handler) error {
+func (r *Router) TryMount(pattern string, h http.Handler) error {
 	if h == nil {
 		h = http.NotFoundHandler()
 	}
