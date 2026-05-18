@@ -17,6 +17,27 @@ passed directly to `http.ListenAndServe` or `http.Server`.
 go get github.com/ryanfowler/arc
 ```
 
+## Higher-Level Handlers
+
+The core `arc` package stays close to `net/http`. Applications that want typed
+request binding, JSON response helpers, and centralized error handling can use
+the child `arcx` package:
+
+```go
+r := arcx.New()
+
+r.Get("/users/{id}", arcx.JSON(func(c *arcx.Context, in GetUser) (User, error) {
+	return users.Get(c.Context(), in.ID)
+}))
+
+type GetUser struct {
+	ID int64 `param:"id"`
+}
+```
+
+`arcx` wraps the same router, so ordinary middleware, subrouters, host routers,
+mounted handlers, and raw `http.Handler` values still work.
+
 ## Quick Start
 
 Create a router during application startup, register routes on it, then serve
