@@ -1677,6 +1677,27 @@ func TestTrySubRouterReturnsMatchErrors(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestTrySubRouterConflictDoesNotAttachExistingRouteEntry(t *testing.T) {
+	r := New()
+	r.HandleAll("/api/{name}.json", writeStatus(http.StatusAccepted))
+	r.HandleAll("/api/v{version}.json/", writeStatus(http.StatusNoContent))
+
+	var conflict *match.ConflictError
+	if child, err := r.TrySubRouter("/api/{name}.json"); !errors.As(err, &conflict) {
+		t.Fatalf("TrySubRouter conflict child, error = %v, %v; want *match.ConflictError", child, err)
+	}
+	if r.pathEntries["/api/{name}.json"].child != nil {
+		t.Fatal("TrySubRouter attached child to existing route entry after failed registration")
+	}
+	if r.hasSubRouters {
+		t.Fatal("router hasSubRouters = true after failed TrySubRouter, want false")
+	}
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/foo.json", nil))
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestSubRouterBacktracksAcrossParamMounts(t *testing.T) {
 	r := New()
 	foo := r.SubRouter("/{section}/foo")
