@@ -124,6 +124,111 @@ func BenchmarkNormalizePercentEncodedPattern(b *testing.B) {
 	}
 }
 
+func BenchmarkMarkEscapedSlashes(b *testing.B) {
+	benchmarks := []struct {
+		name    string
+		decoded string
+		escaped string
+	}{
+		{
+			name:    "no_escaped_slash",
+			decoded: "/files/meta data",
+			escaped: "/files/meta%20data",
+		},
+		{
+			name:    "param",
+			decoded: "/files/a/b",
+			escaped: "/files/a%2Fb",
+		},
+		{
+			name:    "decoded_static",
+			decoded: "/files/a/b/meta data",
+			escaped: "/files/a%2Fb/meta%20data",
+		},
+		{
+			name:    "literal_nul",
+			decoded: "/files/a\x00b/c/d",
+			escaped: "/files/a%00b/c%2Fd",
+		},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			b.ReportAllocs()
+
+			var marked bool
+			for i := 0; i < b.N; i++ {
+				benchmarkParam, marked = markEscapedSlashes(bm.decoded, bm.escaped)
+			}
+			if marked {
+				benchmarkStatus = 1
+			} else {
+				benchmarkStatus = 0
+			}
+		})
+	}
+}
+
+func BenchmarkRestoreEscapedSlash(b *testing.B) {
+	benchmarks := []struct {
+		name string
+		path string
+	}{
+		{
+			name: "no_marker",
+			path: "/files/meta-data",
+		},
+		{
+			name: "escaped_slash",
+			path: "/files/a" + string(escapedSlashMarker) + string(escapedSlashCode) + "b",
+		},
+		{
+			name: "literal_nul",
+			path: "/files/a" + string(escapedSlashMarker) + string(escapedSlashMarker) + "b/c" + string(escapedSlashMarker) + string(escapedSlashCode) + "d",
+		},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			b.ReportAllocs()
+
+			for i := 0; i < b.N; i++ {
+				benchmarkParam = restoreEscapedSlash(bm.path)
+			}
+		})
+	}
+}
+
+func BenchmarkEscapedSlashRawPath(b *testing.B) {
+	benchmarks := []struct {
+		name string
+		path string
+	}{
+		{
+			name: "no_marker",
+			path: "/files/meta-data",
+		},
+		{
+			name: "escaped_slash",
+			path: "/files/a" + string(escapedSlashMarker) + string(escapedSlashCode) + "b",
+		},
+		{
+			name: "literal_nul",
+			path: "/files/a" + string(escapedSlashMarker) + string(escapedSlashMarker) + "b/c" + string(escapedSlashMarker) + string(escapedSlashCode) + "d",
+		},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			b.ReportAllocs()
+
+			for i := 0; i < b.N; i++ {
+				benchmarkParam = escapedSlashRawPath(bm.path)
+			}
+		})
+	}
+}
+
 func BenchmarkValidateUniqueParamNames(b *testing.B) {
 	benchmarks := []struct {
 		name    string
