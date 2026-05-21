@@ -16,80 +16,39 @@ const (
 )
 
 type hostMatcher[T any] struct {
-	dnsRoutes          dns.Router[T]
-	ipRoutes           map[string]T
-	routesByLabelCount map[int][]hostRoute
-}
-
-type hostRoute struct {
-	pattern string
-	labels  []hostLabelPattern
+	dnsRoutes dns.Router[T]
+	ipRoutes  map[string]T
 }
 
 type hostLabelPattern struct {
-	literal   string
+	text      string
 	paramName string
-	rawParam  string
 }
 
-type hostLabelMatch uint8
-
-const (
-	hostLabelSame hostLabelMatch = iota
-	hostLabelAMoreSpecific
-	hostLabelBMoreSpecific
-	hostLabelDisjoint
-)
-
 func (m *hostMatcher[T]) TryInsert(pattern string, value T) error {
-	labels, err := parseHostPattern(pattern)
+	host, ipLiteral, err := normalizeHostPattern(pattern)
 	if err != nil {
 		return err
 	}
 
-	route := hostRoute{
-		pattern: joinHostPattern(labels, "."),
-		labels:  labels,
-	}
-	if existing := m.findConflict(route); existing != nil {
-		return &match.ConflictError{
-			Route: route.pattern,
-			With:  existing.pattern,
-		}
-	}
-
-	if isIPv6Literal(route.pattern) {
+	if ipLiteral {
 		if m.ipRoutes == nil {
 			m.ipRoutes = make(map[string]T)
 		}
-		m.ipRoutes[route.pattern] = value
-		m.index(route)
+		if _, ok := m.ipRoutes[host]; ok {
+			return &match.ConflictError{
+				Route: host,
+				With:  host,
+			}
+		}
+		m.ipRoutes[host] = value
 		return nil
 	}
 
-	if err := m.dnsRoutes.TryInsert(route.pattern, value); err != nil {
+	if err := m.dnsRoutes.TryInsert(host, value); err != nil {
 		return hostInsertError(err)
 	}
-	m.index(route)
 	return nil
-}
-
-func (m *hostMatcher[T]) findConflict(route hostRoute) *hostRoute {
-	for i := range m.routesByLabelCount[len(route.labels)] {
-		existing := &m.routesByLabelCount[len(route.labels)][i]
-		if hostRoutesConflict(existing, &route) {
-			return existing
-		}
-	}
-	return nil
-}
-
-func (m *hostMatcher[T]) index(route hostRoute) {
-	labelCount := len(route.labels)
-	if m.routesByLabelCount == nil {
-		m.routesByLabelCount = make(map[int][]hostRoute)
-	}
-	m.routesByLabelCount[labelCount] = append(m.routesByLabelCount[labelCount], route)
 }
 
 func hostInsertError(err error) error {
@@ -101,43 +60,6 @@ func hostInsertError(err error) error {
 		}
 	}
 	return ErrInvalidHostPattern
-}
-
-func hostRoutesConflict(a, b *hostRoute) bool {
-	if len(a.labels) != len(b.labels) {
-		return false
-	}
-
-	aMoreSpecific := false
-	bMoreSpecific := false
-	for i := range a.labels {
-		switch hostLabelSpecificity(a.labels[i], b.labels[i]) {
-		case hostLabelDisjoint:
-			return false
-		case hostLabelAMoreSpecific:
-			aMoreSpecific = true
-		case hostLabelBMoreSpecific:
-			bMoreSpecific = true
-		}
-	}
-
-	return aMoreSpecific == bMoreSpecific
-}
-
-func hostLabelSpecificity(a, b hostLabelPattern) hostLabelMatch {
-	aParam := a.paramName != ""
-	bParam := b.paramName != ""
-	switch {
-	case !aParam && !bParam:
-		if a.literal != b.literal {
-			return hostLabelDisjoint
-		}
-	case !aParam && bParam:
-		return hostLabelAMoreSpecific
-	case aParam && !bParam:
-		return hostLabelBMoreSpecific
-	}
-	return hostLabelSame
 }
 
 func (m *hostMatcher[T]) Match(host string) (T, match.Params, bool) {
@@ -153,47 +75,47 @@ func (m *hostMatcher[T]) Match(host string) (T, match.Params, bool) {
 	return m.dnsRoutes.Match(host)
 }
 
-func parseHostPattern(pattern string) ([]hostLabelPattern, error) {
+func normalizeHostPattern(pattern string) (string, bool, error) {
 	if pattern == "" {
-		return nil, ErrInvalidHostPattern
+		return "", false, ErrInvalidHostPattern
 	}
 	if h, port, err := net.SplitHostPort(pattern); err == nil && h != "" && port != "" {
-		return nil, ErrInvalidHostPattern
+		return "", false, ErrInvalidHostPattern
 	}
 
 	host := normalizeHostAddress(pattern)
 	if isIPv6Literal(host) {
-		return []hostLabelPattern{{literal: strings.ToLower(host)}}, nil
+		return strings.ToLower(host), true, nil
 	}
 	if strings.ContainsAny(host, "[]:") {
-		return nil, ErrInvalidHostPattern
+		return "", false, ErrInvalidHostPattern
 	}
 
 	host = trimTrailingHostDot(host)
 	if host == "" {
-		return nil, ErrInvalidHostPattern
+		return "", false, ErrInvalidHostPattern
 	}
 
 	var labels []hostLabelPattern
 	var seenNames [8]string
 	seenCount := 0
 	var seenMap map[string]struct{}
-	for start := 0; start <= len(host); {
+	for labelIndex, start := 0, 0; start <= len(host); labelIndex++ {
 		end := start
 		for end < len(host) && host[end] != '.' {
 			end++
 		}
 		if end == start {
-			return nil, ErrInvalidHostPattern
+			return "", false, ErrInvalidHostPattern
 		}
 
-		label, err := normalizeHostPatternLabel(host[start:end])
+		label, err := normalizeHostPatternLabel(host[start:end], labelIndex)
 		if err != nil {
-			return nil, err
+			return "", false, err
 		}
 		if label.paramName != "" {
 			if err := checkHostParamName(label.paramName, &seenNames, &seenCount, &seenMap); err != nil {
-				return nil, err
+				return "", false, err
 			}
 		}
 		labels = append(labels, label)
@@ -205,46 +127,136 @@ func parseHostPattern(pattern string) ([]hostLabelPattern, error) {
 	}
 
 	if len(labels) == 0 {
-		return nil, ErrInvalidHostPattern
+		return "", false, ErrInvalidHostPattern
 	}
-	if minHostPatternLength(labels) > maxDNSHostLength {
-		return nil, ErrInvalidHostPattern
-	}
-	return labels, nil
+	return joinHostPattern(labels, "."), false, nil
 }
 
-func normalizeHostPatternLabel(label string) (hostLabelPattern, error) {
+func normalizeHostPatternLabel(label string, labelIndex int) (hostLabelPattern, error) {
 	if strings.ContainsAny(label, "{}") {
-		name, ok := parseHostParamLabel(label)
-		if !ok {
-			return hostLabelPattern{}, ErrInvalidHostPattern
-		}
-		return hostLabelPattern{
-			paramName: name,
-			rawParam:  label,
-		}, nil
+		return normalizeDynamicHostPatternLabel(label, labelIndex)
 	}
 
 	literal, ok := normalizeHostLiteralLabel(label)
 	if !ok {
 		return hostLabelPattern{}, ErrInvalidHostPattern
 	}
-	return hostLabelPattern{literal: literal}, nil
+	return hostLabelPattern{text: literal}, nil
 }
 
-func parseHostParamLabel(label string) (string, bool) {
-	if len(label) < 3 || label[0] != '{' {
-		return "", false
+func normalizeDynamicHostPatternLabel(label string, labelIndex int) (hostLabelPattern, error) {
+	var prefix strings.Builder
+	var suffix strings.Builder
+	paramSeen := false
+	paramRaw := ""
+	paramName := ""
+	catchAll := false
+
+	writeLiteral := func(c byte) {
+		if paramSeen {
+			suffix.WriteByte(c)
+			return
+		}
+		prefix.WriteByte(c)
 	}
-	end, err := findPatternParamEnd(label, 1)
-	if err != nil || end != len(label)-1 {
-		return "", false
+
+	for i := 0; i < len(label); {
+		switch label[i] {
+		case '{':
+			if i+1 < len(label) && label[i+1] == '{' {
+				writeLiteral('{')
+				i += 2
+				continue
+			}
+			if paramSeen {
+				return hostLabelPattern{}, ErrInvalidHostPattern
+			}
+			end, err := findPatternParamEnd(label, i+1)
+			if err != nil {
+				return hostLabelPattern{}, ErrInvalidHostPattern
+			}
+
+			name := unescapePatternParamName(label[i+1 : end])
+			if name == "" {
+				return hostLabelPattern{}, ErrInvalidHostPattern
+			}
+			if name[0] == '*' {
+				catchAll = true
+				name = name[1:]
+				if name == "" || labelIndex != 0 {
+					return hostLabelPattern{}, ErrInvalidHostPattern
+				}
+			}
+			paramSeen = true
+			paramRaw = label[i : end+1]
+			paramName = name
+			i = end + 1
+		case '}':
+			if i+1 < len(label) && label[i+1] == '}' {
+				writeLiteral('}')
+				i += 2
+				continue
+			}
+			return hostLabelPattern{}, ErrInvalidHostPattern
+		default:
+			writeLiteral(label[i])
+			i++
+		}
 	}
-	name := unescapePatternParamName(label[1:end])
-	if name == "" || name[0] == '*' {
-		return "", false
+
+	if !paramSeen {
+		return hostLabelPattern{}, ErrInvalidHostPattern
 	}
-	return name, true
+	if catchAll && suffix.Len() != 0 {
+		return hostLabelPattern{}, ErrInvalidHostPattern
+	}
+
+	prefixText, ok := normalizeDynamicHostPatternLiteral(prefix.String())
+	if !ok || (prefixText != "" && prefixText[0] == '-') {
+		return hostLabelPattern{}, ErrInvalidHostPattern
+	}
+	suffixText, ok := normalizeDynamicHostPatternLiteral(suffix.String())
+	if !ok || (suffixText != "" && suffixText[len(suffixText)-1] == '-') {
+		return hostLabelPattern{}, ErrInvalidHostPattern
+	}
+
+	literalLength := len(prefixText) + len(suffixText)
+	if catchAll {
+		if literalLength >= maxDNSLabelLength {
+			return hostLabelPattern{}, ErrInvalidHostPattern
+		}
+	} else if literalLength >= maxDNSLabelLength {
+		return hostLabelPattern{}, ErrInvalidHostPattern
+	}
+
+	return hostLabelPattern{
+		text:      prefixText + paramRaw + suffixText,
+		paramName: paramName,
+	}, nil
+}
+
+func normalizeDynamicHostPatternLiteral(s string) (string, bool) {
+	if s == "" {
+		return "", true
+	}
+
+	needsLower := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+			needsLower = true
+		case c >= '0' && c <= '9':
+		case c == '-':
+		default:
+			return "", false
+		}
+	}
+	if needsLower {
+		return strings.ToLower(s), true
+	}
+	return s, true
 }
 
 func checkHostParamName(name string, seenNames *[8]string, seenCount *int, seenMap *map[string]struct{}) error {
@@ -277,12 +289,12 @@ func checkHostParamName(name string, seenNames *[8]string, seenCount *int, seenM
 
 func joinHostPattern(labels []hostLabelPattern, sep string) string {
 	if len(labels) == 1 {
-		return labels[0].patternText()
+		return labels[0].text
 	}
 
 	var n int
 	for i := range labels {
-		n += len(labels[i].patternText())
+		n += len(labels[i].text)
 	}
 	n += len(sep) * (len(labels) - 1)
 
@@ -292,28 +304,9 @@ func joinHostPattern(labels []hostLabelPattern, sep string) string {
 		if i > 0 {
 			b.WriteString(sep)
 		}
-		b.WriteString(labels[i].patternText())
+		b.WriteString(labels[i].text)
 	}
 	return b.String()
-}
-
-func (p hostLabelPattern) patternText() string {
-	if p.paramName != "" {
-		return p.rawParam
-	}
-	return p.literal
-}
-
-func minHostPatternLength(labels []hostLabelPattern) int {
-	length := len(labels) - 1
-	for i := range labels {
-		if labels[i].paramName != "" {
-			length++
-			continue
-		}
-		length += len(labels[i].literal)
-	}
-	return length
 }
 
 func normalizeRequestHost(host string) string {

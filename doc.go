@@ -91,13 +91,23 @@
 //	// GET /assets/css/app.css captures path = "css/app.css".
 //	// GET /assets does not match because the catch-all value would be empty.
 //
-// Host parameters must occupy an entire DNS label and capture exactly one
-// non-empty label. Host patterns do not support catch-all parameters.
+// Host patterns match the whole normalized request host, not a suffix. A host
+// parameter matches one non-empty DNS label, either as a whole label or with
+// literal text around it; when literal text is present, only the parameter part
+// is captured. Each host label can contain at most one parameter. A host
+// catch-all parameter captures one or more leading labels and must appear in the
+// leftmost label. An IPv6 literal only matches an IPv6 literal host pattern.
 //
 //	r.Host("{tenant}.example.com")
-//
 //	// Host acme.example.com captures tenant = "acme".
 //	// Host a.b.example.com does not match.
+//
+//	r.Host("api-{region}.example.com")
+//	// Host api-us-west.example.com captures region = "us-west".
+//
+//	r.Host("{*subdomain}.example.com")
+//	// Host a.b.example.com captures subdomain = "a.b".
+//	// Host example.com does not match because the catch-all value would be empty.
 //
 // Literal braces are escaped by doubling them:
 //
@@ -157,7 +167,10 @@
 //	// GET /api/healthz uses the parent route.
 //	// GET /api/users/42 uses the subrouter route.
 //
-// Host routers are checked before ordinary path dispatch. If no host pattern
+// Host routers are checked before ordinary path dispatch. Literal host labels
+// are more specific than parameter labels, and catch-all host patterns are
+// considered after finite host patterns. Ambiguous host patterns that cannot be
+// ordered deterministically are rejected at registration. If no host pattern
 // matches, Arc falls through to the parent router's path routes.
 //
 // # Request Parameters
@@ -352,13 +365,28 @@
 //		fmt.Fprintf(w, "tenant %s\n", req.PathValue("tenant"))
 //	})
 //
-// Host matching is case-insensitive for literal host text, while parameter
-// names keep their original case. A pattern such as "{tenant}.example.com"
-// captures one DNS label before ".example.com"; use another parameter label to
-// match another subdomain level. Trailing dots are ignored, IDNs are normalized
-// to punycode, and a port in Request.Host is ignored before matching. Brackets
-// around IPv6 literals are also ignored, so "[::1]" and "[::1]:8080" match the
-// host pattern "::1".
+// Host patterns are matched against the whole normalized host. A pattern such
+// as "example.com" does not match "www.example.com", and
+// "{tenant}.example.com" captures exactly one DNS label before ".example.com";
+// use another parameter label or a leftmost catch-all to match more subdomain
+// levels. "api-{region}" captures one label with a required literal prefix,
+// while "api-{*subdomain}.example.com" captures leading labels after the
+// "api-" prefix. Literal host text is matched case-insensitively, while
+// parameter names keep their original case. Captured host parameter values come
+// from the normalized host, so ASCII letters are lowercase and IDNs are
+// punycode.
+//
+// Trailing dots are ignored, IDNs are normalized to punycode, and a numeric
+// port in Request.Host is ignored before matching. Brackets around IPv6
+// literals are also ignored, so "[::1]" and "[::1]:8080" match the host pattern
+// "::1". Host patterns themselves must not include a port.
+//
+// Literal labels are more specific than parameter labels. If both
+// "api.example.com" and "{tenant}.example.com" are registered,
+// "api.example.com" uses the literal host router. Finite host patterns are more
+// specific than catch-all host patterns. Overlapping dynamic patterns with no
+// deterministic winner, such as "{tenant}.example.com" and
+// "{account}.example.com", conflict.
 //
 // If no host pattern matches, Arc continues dispatching through the parent
 // router's ordinary routes, subrouters, and mounts.
@@ -419,11 +447,11 @@
 // Extension methods are accepted and method matching is case-sensitive. Route,
 // subrouter, and mount path patterns that do not begin with "/" return
 // ErrInvalidPathPattern. Empty host patterns, host patterns with invalid DNS
-// characters, and host patterns with non-label parameter syntax return
-// ErrInvalidHostPattern. Patterns that capture the same parameter name more
-// than once return ErrDuplicateParamName. Other registration errors include
-// invalid parameter syntax, duplicate registrations, and ambiguous patterns
-// that could match the same requests.
+// characters, host patterns with ports, invalid host catch-all placement, and
+// invalid host parameter syntax return ErrInvalidHostPattern. Patterns that
+// capture the same parameter name more than once return ErrDuplicateParamName.
+// Other registration errors include invalid parameter syntax, duplicate
+// registrations, and ambiguous patterns that could match the same requests.
 //
 // # Child Router Configuration
 //

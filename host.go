@@ -12,13 +12,25 @@ package arc
 //	tenant := r.Host("{tenant}.example.com")
 //	tenant.Get("/", tenantHome)
 //
-// Host patterns are DNS-label patterns. For example, "api.example.com" matches
-// one literal host and "{tenant}.example.com" captures exactly one DNS label
-// before ".example.com" as "tenant". Host parameters must occupy an entire
-// label, so "{tenant}.example.com" matches "acme.example.com" but not
-// "a.b.example.com". Request hosts are matched case-insensitively, trailing
-// dots are ignored, IDNs are normalized to punycode, a port in Request.Host is
-// ignored, and brackets around IPv6 literals are ignored.
+// Host patterns are DNS-label patterns matched against the whole normalized
+// request host. For example, "api.example.com" matches one literal host and
+// "{tenant}.example.com" captures exactly one DNS label before ".example.com"
+// as "tenant". Host parameters can occupy an entire label or appear with
+// literal text around them; "api-{region}.example.com" captures "us-west" from
+// "api-us-west.example.com". Each host label can contain at most one parameter.
+// A catch-all parameter such as "{*subdomain}.example.com" captures one or more
+// leading labels and must appear in the leftmost label.
+//
+// Literal host labels are matched case-insensitively and are more specific than
+// parameter labels. If "api.example.com" and "{tenant}.example.com" are both
+// registered, "api.example.com" handles that host. Finite host patterns are
+// more specific than catch-all host patterns. Overlapping host patterns with no
+// deterministic winner are rejected as ambiguous.
+//
+// Request hosts are normalized before matching: trailing dots are ignored, IDNs
+// are normalized to punycode, a numeric port in Request.Host is ignored, and
+// brackets around IPv6 literals are ignored. Host patterns themselves must not
+// include a port. IPv6 literals only match literal IPv6 host patterns.
 //
 // Parameters captured by the host pattern are available to handlers registered
 // on the returned router through [http.Request.PathValue]. If no host pattern
