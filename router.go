@@ -33,13 +33,15 @@ var ErrDuplicateParamName = fmt.Errorf("%w: duplicate parameter names are not al
 var ErrInvalidPathPattern = errors.New("path patterns must begin with /")
 
 // ErrInvalidHostPattern reports a host router pattern that is empty, contains
-// characters outside valid DNS host syntax, or uses parameter syntax that host
-// patterns do not support.
+// characters outside valid DNS host syntax, includes a port, or uses parameter
+// syntax that Arc host patterns do not support.
 //
 // Host patterns registered with [Router.Host] and [Router.TryHost] must be a
-// valid DNS host name, an IPv6 literal, or a DNS host name with parameters that
-// occupy an entire label, such as "{tenant}.example.com".
-var ErrInvalidHostPattern = fmt.Errorf("%w: host patterns must be valid DNS names, IP literals, or label parameters", match.ErrInvalidParam)
+// valid DNS host name, an IPv6 literal, or a DNS host name with parameters such
+// as "{tenant}.example.com", "api-{region}.example.com", or
+// "{*subdomain}.example.com". Host patterns are matched against the whole
+// normalized request host.
+var ErrInvalidHostPattern = fmt.Errorf("%w: host patterns must be valid DNS names, IP literals, or host parameters", match.ErrInvalidParam)
 
 // ErrInvalidMethod reports a route method that is not a valid HTTP method
 // token.

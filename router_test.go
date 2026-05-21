@@ -2153,6 +2153,82 @@ func TestHostRouterMatchesMultipleParameterizedLabels(t *testing.T) {
 	assertStatus(t, rec, http.StatusNoContent)
 }
 
+func TestHostRouterMatchesAffixedParameterizedLabel(t *testing.T) {
+	r := New()
+	host := r.Host("api-{region}.example.com")
+	host.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("region"); got != "us-west" {
+			t.Fatalf("PathValue(region) = %q, want %q", got, "us-west")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	r.Get("/", writeStatus(http.StatusAccepted))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://api-us-west.example.com/", nil))
+	assertStatus(t, rec, http.StatusNoContent)
+
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://web-us-west.example.com/", nil))
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestHostRouterCatchAllCapturesLeadingLabels(t *testing.T) {
+	r := New()
+	host := r.Host("{*subdomain}.example.com")
+	host.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("subdomain"); got != "api.us-west" {
+			t.Fatalf("PathValue(subdomain) = %q, want %q", got, "api.us-west")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	r.Get("/", writeStatus(http.StatusAccepted))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://api.us-west.example.com/", nil))
+	assertStatus(t, rec, http.StatusNoContent)
+
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://example.com/", nil))
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestHostRouterCatchAllCanCaptureWholeHost(t *testing.T) {
+	r := New()
+	host := r.Host("{*host}")
+	host.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("host"); got != "api.example.com" {
+			t.Fatalf("PathValue(host) = %q, want %q", got, "api.example.com")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil))
+
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func TestHostRouterMatchesPrefixedCatchAll(t *testing.T) {
+	r := New()
+	host := r.Host("api-{*subdomain}.example.com")
+	host.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("subdomain"); got != "us-west.internal" {
+			t.Fatalf("PathValue(subdomain) = %q, want %q", got, "us-west.internal")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	r.Get("/", writeStatus(http.StatusAccepted))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://api-us-west.internal.example.com/", nil))
+	assertStatus(t, rec, http.StatusNoContent)
+
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://web-us-west.internal.example.com/", nil))
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestHostRouterSharesParamBranchAcrossDisjointHosts(t *testing.T) {
 	r := New()
 	tenant := r.Host("{tenant}.example.com")
@@ -2281,6 +2357,19 @@ func TestHostRouterPrefersStaticHost(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestHostRouterPrefersStaticHostOverCatchAll(t *testing.T) {
+	r := New()
+	wildcard := r.Host("{*subdomain}.example.com")
+	wildcard.Get("/", writeStatus(http.StatusNoContent))
+	www := r.Host("www.example.com")
+	www.Get("/", writeStatus(http.StatusAccepted))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://www.example.com/", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestTryHostReturnsMatchErrors(t *testing.T) {
 	r := New()
 	if child, err := r.TryHost("{}.example.com"); !errors.Is(err, ErrInvalidHostPattern) {
@@ -2309,8 +2398,8 @@ func TestTryHostReturnsMatchErrors(t *testing.T) {
 	if child, err := r.TryHost("{account}.example.com"); !errors.As(err, &conflict) {
 		t.Fatalf("TryHost duplicate dynamic child, error = %v, %v; want *match.ConflictError", child, err)
 	}
-	if child, err := r.TryHost("api.{domain}.com"); !errors.As(err, &conflict) {
-		t.Fatalf("TryHost ambiguous host child, error = %v, %v; want *match.ConflictError", child, err)
+	if child, err := r.TryHost("{*subdomain}.example.com"); !errors.As(err, &conflict) {
+		t.Fatalf("TryHost catch-all conflict child, error = %v, %v; want *match.ConflictError", child, err)
 	}
 
 	rec := httptest.NewRecorder()
@@ -2328,8 +2417,9 @@ func TestTryHostRejectsInvalidHostPatterns(t *testing.T) {
 		"bad_host.example.com",
 		"-bad.example.com",
 		"bad-.example.com",
-		"{tenant}-api.example.com",
-		"{*tenant}.example.com",
+		"{tenant}{region}.example.com",
+		"api.{*tenant}.example.com",
+		"api-{*tenant}x.example.com",
 		"api.example.com:8080",
 	}
 
