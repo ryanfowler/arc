@@ -1,10 +1,12 @@
 package arc
 
 import (
+	"errors"
 	"net"
 	"strings"
 
 	"github.com/ryanfowler/match"
+	"github.com/ryanfowler/match/dns"
 	"golang.org/x/net/idna"
 )
 
@@ -14,30 +16,14 @@ const (
 )
 
 type hostMatcher[T any] struct {
-	staticRoutes       map[string]*hostRoute[T]
-	routesByLabelCount map[int][]*hostRoute[T]
-	root               hostNode[T]
+	dnsRoutes          dns.Router[T]
+	ipRoutes           map[string]T
+	routesByLabelCount map[int][]hostRoute
 }
 
-type hostNode[T any] struct {
-	static      []hostStaticEdge[T]
-	staticIndex map[string]*hostNode[T]
-	param       *hostNode[T]
-	value       *hostRoute[T]
-}
-
-type hostStaticEdge[T any] struct {
-	label string
-	child *hostNode[T]
-}
-
-type hostRoute[T any] struct {
-	pattern        string
-	labels         []hostLabelPattern
-	captureNames   []string
-	captureIndexes []int
-	captureCount   int
-	value          T
+type hostRoute struct {
+	pattern string
+	labels  []hostLabelPattern
 }
 
 type hostLabelPattern struct {
@@ -56,11 +42,15 @@ const (
 )
 
 func (m *hostMatcher[T]) TryInsert(pattern string, value T) error {
-	route, err := newHostRoute(pattern, value)
+	labels, err := parseHostPattern(pattern)
 	if err != nil {
 		return err
 	}
 
+	route := hostRoute{
+		pattern: joinHostPattern(labels, "."),
+		labels:  labels,
+	}
 	if existing := m.findConflict(route); existing != nil {
 		return &match.ConflictError{
 			Route: route.pattern,
@@ -68,40 +58,52 @@ func (m *hostMatcher[T]) TryInsert(pattern string, value T) error {
 		}
 	}
 
+	if isIPv6Literal(route.pattern) {
+		if m.ipRoutes == nil {
+			m.ipRoutes = make(map[string]T)
+		}
+		m.ipRoutes[route.pattern] = value
+		m.index(route)
+		return nil
+	}
+
+	if err := m.dnsRoutes.TryInsert(route.pattern, value); err != nil {
+		return hostInsertError(err)
+	}
 	m.index(route)
-	m.root.insert(route, 0)
 	return nil
 }
 
-func (m *hostMatcher[T]) findConflict(route *hostRoute[T]) *hostRoute[T] {
-	if route.captureCount == 0 {
-		return m.staticRoutes[route.pattern]
-	}
-
-	for _, existing := range m.routesByLabelCount[len(route.labels)] {
-		if hostRoutesConflict(existing, route) {
+func (m *hostMatcher[T]) findConflict(route hostRoute) *hostRoute {
+	for i := range m.routesByLabelCount[len(route.labels)] {
+		existing := &m.routesByLabelCount[len(route.labels)][i]
+		if hostRoutesConflict(existing, &route) {
 			return existing
 		}
 	}
 	return nil
 }
 
-func (m *hostMatcher[T]) index(route *hostRoute[T]) {
+func (m *hostMatcher[T]) index(route hostRoute) {
 	labelCount := len(route.labels)
 	if m.routesByLabelCount == nil {
-		m.routesByLabelCount = make(map[int][]*hostRoute[T])
+		m.routesByLabelCount = make(map[int][]hostRoute)
 	}
 	m.routesByLabelCount[labelCount] = append(m.routesByLabelCount[labelCount], route)
-
-	if route.captureCount == 0 {
-		if m.staticRoutes == nil {
-			m.staticRoutes = make(map[string]*hostRoute[T])
-		}
-		m.staticRoutes[route.pattern] = route
-	}
 }
 
-func hostRoutesConflict[T any](a, b *hostRoute[T]) bool {
+func hostInsertError(err error) error {
+	var conflict *dns.ConflictError
+	if errors.As(err, &conflict) {
+		return &match.ConflictError{
+			Route: conflict.Pattern,
+			With:  conflict.With,
+		}
+	}
+	return ErrInvalidHostPattern
+}
+
+func hostRoutesConflict(a, b *hostRoute) bool {
 	if len(a.labels) != len(b.labels) {
 		return false
 	}
@@ -139,153 +141,16 @@ func hostLabelSpecificity(a, b hostLabelPattern) hostLabelMatch {
 }
 
 func (m *hostMatcher[T]) Match(host string) (T, match.Params, bool) {
-	route, ok := m.root.match(host, 0)
-	if !ok {
+	if isIPv6Literal(host) {
+		if m.ipRoutes != nil {
+			if value, ok := m.ipRoutes[host]; ok {
+				return value, match.Params{}, true
+			}
+		}
 		var zero T
 		return zero, match.Params{}, false
 	}
-	return route.value, route.params(host), true
-}
-
-func (n *hostNode[T]) insert(route *hostRoute[T], labelIndex int) {
-	if labelIndex == len(route.labels) {
-		n.value = route
-		return
-	}
-
-	label := route.labels[labelIndex]
-	var child *hostNode[T]
-	if label.paramName != "" {
-		if n.param == nil {
-			n.param = &hostNode[T]{}
-		}
-		child = n.param
-	} else {
-		child = n.staticChild(label.literal)
-		if child == nil {
-			child = n.addStaticChild(label.literal)
-		}
-	}
-	child.insert(route, labelIndex+1)
-}
-
-func (n *hostNode[T]) match(host string, start int) (*hostRoute[T], bool) {
-	if start == len(host) {
-		if n.value == nil {
-			return nil, false
-		}
-		return n.value, true
-	}
-
-	label, next := nextHostLabel(host, start)
-	if child := n.staticChild(label); child != nil {
-		if route, ok := child.match(host, next); ok {
-			return route, true
-		}
-	}
-
-	if n.param != nil && isHostParamLabel(label) {
-		if route, ok := n.param.match(host, next); ok {
-			return route, true
-		}
-	}
-
-	return nil, false
-}
-
-func (n *hostNode[T]) staticChild(label string) *hostNode[T] {
-	if n.staticIndex != nil {
-		return n.staticIndex[label]
-	}
-	for i := range n.static {
-		if n.static[i].label == label {
-			return n.static[i].child
-		}
-	}
-	return nil
-}
-
-func (n *hostNode[T]) addStaticChild(label string) *hostNode[T] {
-	child := &hostNode[T]{}
-	n.static = append(n.static, hostStaticEdge[T]{label: label, child: child})
-	if len(n.static) == 9 {
-		n.staticIndex = make(map[string]*hostNode[T], len(n.static))
-		for i := range n.static {
-			n.staticIndex[n.static[i].label] = n.static[i].child
-		}
-	} else if n.staticIndex != nil {
-		n.staticIndex[label] = child
-	}
-	return child
-}
-
-func (r *hostRoute[T]) params(host string) match.Params {
-	if r.captureCount == 0 {
-		return match.Params{}
-	}
-	if r.captureCount == 1 {
-		return match.ParamsOf(match.Param{
-			Key: r.captureNames[0],
-			Val: hostLabelAt(host, r.captureIndexes[0]),
-		})
-	}
-
-	var inline [4]match.Param
-	var heap []match.Param
-	capture := 0
-	start := 0
-	for labelIndex := 0; capture < r.captureCount; labelIndex++ {
-		label, next := nextHostLabel(host, start)
-		if r.captureIndexes[capture] == labelIndex {
-			param := match.Param{Key: r.captureNames[capture], Val: label}
-			if capture < len(inline) {
-				inline[capture] = param
-			} else {
-				if heap == nil {
-					heap = make([]match.Param, 0, r.captureCount)
-					heap = append(heap, inline[:]...)
-				}
-				heap = append(heap, param)
-			}
-			capture++
-		}
-		start = next
-	}
-
-	switch r.captureCount {
-	case 1:
-		return match.ParamsOf(inline[0])
-	case 2:
-		return match.ParamsOf(inline[0], inline[1])
-	case 3:
-		return match.ParamsOf(inline[0], inline[1], inline[2])
-	case 4:
-		return match.ParamsOf(inline[0], inline[1], inline[2], inline[3])
-	default:
-		return match.ParamsOf(heap...)
-	}
-}
-
-func newHostRoute[T any](pattern string, value T) (*hostRoute[T], error) {
-	labels, err := parseHostPattern(pattern)
-	if err != nil {
-		return nil, err
-	}
-
-	pattern = joinHostPattern(labels, ".")
-	route := &hostRoute[T]{
-		pattern: pattern,
-		labels:  labels,
-		value:   value,
-	}
-	for i := range labels {
-		if labels[i].paramName != "" {
-			route.captureNames = append(route.captureNames, labels[i].paramName)
-			route.captureIndexes = append(route.captureIndexes, i)
-			route.captureCount++
-		}
-	}
-	return route, nil
+	return m.dnsRoutes.Match(host)
 }
 
 func parseHostPattern(pattern string) ([]hostLabelPattern, error) {
@@ -340,6 +205,9 @@ func parseHostPattern(pattern string) ([]hostLabelPattern, error) {
 	}
 
 	if len(labels) == 0 {
+		return nil, ErrInvalidHostPattern
+	}
+	if minHostPatternLength(labels) > maxDNSHostLength {
 		return nil, ErrInvalidHostPattern
 	}
 	return labels, nil
@@ -434,6 +302,18 @@ func (p hostLabelPattern) patternText() string {
 		return p.rawParam
 	}
 	return p.literal
+}
+
+func minHostPatternLength(labels []hostLabelPattern) int {
+	length := len(labels) - 1
+	for i := range labels {
+		if labels[i].paramName != "" {
+			length++
+			continue
+		}
+		length += len(labels[i].literal)
+	}
+	return length
 }
 
 func normalizeRequestHost(host string) string {
@@ -573,28 +453,6 @@ func trimTrailingHostDot(host string) string {
 
 func isIPv6Literal(host string) bool {
 	return strings.IndexByte(host, ':') != -1 && net.ParseIP(host) != nil
-}
-
-func isHostParamLabel(label string) bool {
-	return strings.IndexByte(label, ':') == -1
-}
-
-func nextHostLabel(host string, start int) (string, int) {
-	dot := strings.IndexByte(host[start:], '.')
-	if dot < 0 {
-		return host[start:], len(host)
-	}
-	end := start + dot
-	return host[start:end], end + 1
-}
-
-func hostLabelAt(host string, index int) string {
-	start := 0
-	for i := 0; i < index; i++ {
-		_, start = nextHostLabel(host, start)
-	}
-	label, _ := nextHostLabel(host, start)
-	return label
 }
 
 func isASCIIDigits(s string) bool {
