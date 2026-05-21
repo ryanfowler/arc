@@ -541,10 +541,11 @@ invalid parameter syntax, duplicate registrations, and ambiguous patterns that
 could match the same requests.
 
 Arc uses [`github.com/ryanfowler/match`](https://github.com/ryanfowler/match)
-for path pattern matching. Host routing uses Arc's DNS-label matcher. The
-matching behavior documented here is the Arc contract. Applications usually do
-not need to use the low-level matcher directly, though advanced callers may
-inspect the syntax and conflict errors returned by `Try` registrations.
+for path pattern matching and its `dns` subpackage for host matching. Arc still
+normalizes request hosts and constrains host patterns to the DNS-label behavior
+documented here. Applications usually do not need to use the low-level matchers
+directly, though advanced callers may inspect the syntax and conflict errors
+returned by `Try` registrations.
 
 ## Child Router Configuration
 

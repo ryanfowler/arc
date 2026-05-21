@@ -2402,6 +2402,18 @@ func TestHostRouterNormalizesBracketedIPv6HostWithoutPort(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestHostRouterParamDoesNotCaptureIPv6Literal(t *testing.T) {
+	r := New()
+	host := r.Host("{host}")
+	host.Get("/", writeStatus(http.StatusNoContent))
+	r.Get("/", writeStatus(http.StatusAccepted))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://[::1]/", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestNormalizeRequestHost(t *testing.T) {
 	tests := []struct {
 		name string
