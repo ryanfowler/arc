@@ -124,6 +124,139 @@ func BenchmarkNormalizePercentEncodedPattern(b *testing.B) {
 	}
 }
 
+func BenchmarkNormalizeRequestHost(b *testing.B) {
+	benchmarks := []struct {
+		name string
+		host string
+	}{
+		{
+			name: "lowercase_ascii",
+			host: "api.example.com",
+		},
+		{
+			name: "trailing_dot",
+			host: "api.example.com.",
+		},
+		{
+			name: "uppercase_ascii",
+			host: "API.example.com",
+		},
+		{
+			name: "idna",
+			host: "bücher.example.com",
+		},
+		{
+			name: "invalid",
+			host: "bad_host.example.com",
+		},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			b.ReportAllocs()
+
+			for i := 0; i < b.N; i++ {
+				benchmarkParam = normalizeRequestHost(bm.host)
+			}
+		})
+	}
+}
+
+func BenchmarkHostMatcherMatch(b *testing.B) {
+	for _, hostCount := range []int{1, 100, 1000} {
+		b.Run("static_"+strconv.Itoa(hostCount), func(b *testing.B) {
+			var m hostMatcher[string]
+			for i := 0; i < hostCount; i++ {
+				host := "tenant" + strconv.Itoa(i) + ".example.com"
+				if err := m.TryInsert(host, host); err != nil {
+					b.Fatal(err)
+				}
+			}
+			host := "tenant" + strconv.Itoa(hostCount-1) + ".example.com"
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			var matched bool
+			var value string
+			for i := 0; i < b.N; i++ {
+				var params match.Params
+				value, params, matched = m.Match(host)
+				if params.Len() != 0 {
+					b.Fatalf("params length = %d, want 0", params.Len())
+				}
+			}
+
+			if matched {
+				benchmarkStatus = 1
+			} else {
+				benchmarkStatus = 0
+			}
+			benchmarkParam = value
+		})
+
+		b.Run("dynamic_"+strconv.Itoa(hostCount), func(b *testing.B) {
+			var m hostMatcher[string]
+			for i := 0; i < hostCount; i++ {
+				pattern := "{tenant}.example" + strconv.Itoa(i) + ".com"
+				if err := m.TryInsert(pattern, pattern); err != nil {
+					b.Fatal(err)
+				}
+			}
+			host := "acme.example" + strconv.Itoa(hostCount-1) + ".com"
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			var matched bool
+			var value string
+			var tenant string
+			for i := 0; i < b.N; i++ {
+				var params match.Params
+				value, params, matched = m.Match(host)
+				tenant = params.Get("tenant")
+			}
+
+			if matched {
+				benchmarkStatus = 1
+			} else {
+				benchmarkStatus = 0
+			}
+			benchmarkParam = value + tenant
+		})
+	}
+}
+
+func BenchmarkHostMatcherTryInsert(b *testing.B) {
+	for _, hostCount := range []int{1, 100, 1000} {
+		b.Run("static_"+strconv.Itoa(hostCount), func(b *testing.B) {
+			b.ReportAllocs()
+
+			for i := 0; i < b.N; i++ {
+				var m hostMatcher[string]
+				for host := 0; host < hostCount; host++ {
+					pattern := "tenant" + strconv.Itoa(host) + ".example.com"
+					if err := m.TryInsert(pattern, pattern); err != nil {
+						b.Fatal(err)
+					}
+				}
+			}
+		})
+
+		b.Run("dynamic_"+strconv.Itoa(hostCount), func(b *testing.B) {
+			b.ReportAllocs()
+
+			for i := 0; i < b.N; i++ {
+				var m hostMatcher[string]
+				for host := 0; host < hostCount; host++ {
+					pattern := "{tenant}.example" + strconv.Itoa(host) + ".com"
+					if err := m.TryInsert(pattern, pattern); err != nil {
+						b.Fatal(err)
+					}
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkMarkEscapedSlashes(b *testing.B) {
 	benchmarks := []struct {
 		name    string
