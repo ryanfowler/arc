@@ -1254,13 +1254,27 @@ func fromHex(c byte) (byte, bool) {
 }
 
 func restoreEscapedSlash(path string) string {
-	if strings.IndexByte(path, escapedSlashMarker) < 0 {
+	restored, ok := restoreEscapedSlashValue(path)
+	if !ok {
 		return path
 	}
+	return restored
+}
 
+func restoreEscapedSlashValue(path string) (string, bool) {
+	first := strings.IndexByte(path, escapedSlashMarker)
+	if first < 0 {
+		return path, false
+	}
+
+	return restoreEscapedSlashFrom(path, first), true
+}
+
+func restoreEscapedSlashFrom(path string, first int) string {
 	var b strings.Builder
 	b.Grow(len(path))
-	for i := 0; i < len(path); i++ {
+	b.WriteString(path[:first])
+	for i := first; i < len(path); i++ {
 		if path[i] != escapedSlashMarker {
 			b.WriteByte(path[i])
 			continue
@@ -1284,26 +1298,78 @@ func restoreEscapedSlash(path string) string {
 }
 
 func restoreParams(params match.Params) match.Params {
-	if params.Len() == 0 {
+	switch params.Len() {
+	case 0:
 		return params
+	case 1:
+		param := params.At(0)
+		val, ok := restoreEscapedSlashValue(param.Val)
+		if !ok {
+			return params
+		}
+		param.Val = val
+		return match.ParamsOf(param)
+	case 2:
+		p0 := params.At(0)
+		p1 := params.At(1)
+		ok := restoreParamValue(&p0)
+		ok = restoreParamValue(&p1) || ok
+		if !ok {
+			return params
+		}
+		return match.ParamsOf(p0, p1)
+	case 3:
+		p0 := params.At(0)
+		p1 := params.At(1)
+		p2 := params.At(2)
+		ok := restoreParamValue(&p0)
+		ok = restoreParamValue(&p1) || ok
+		ok = restoreParamValue(&p2) || ok
+		if !ok {
+			return params
+		}
+		return match.ParamsOf(p0, p1, p2)
+	case 4:
+		p0 := params.At(0)
+		p1 := params.At(1)
+		p2 := params.At(2)
+		p3 := params.At(3)
+		ok := restoreParamValue(&p0)
+		ok = restoreParamValue(&p1) || ok
+		ok = restoreParamValue(&p2) || ok
+		ok = restoreParamValue(&p3) || ok
+		if !ok {
+			return params
+		}
+		return match.ParamsOf(p0, p1, p2, p3)
 	}
 
 	var restored []match.Param
 	for i := 0; i < params.Len(); i++ {
 		param := params.At(i)
-		val := restoreEscapedSlash(param.Val)
-		if val == param.Val && restored == nil {
+		if restoreParamValue(&param) && restored == nil {
+			restored = params.AppendTo(nil)
+			restored[i] = param
 			continue
 		}
-		if restored == nil {
-			restored = params.AppendTo(nil)
+		if restored != nil {
+			restored[i] = param
 		}
-		restored[i].Val = val
 	}
 	if restored == nil {
 		return params
 	}
+
 	return match.ParamsOf(restored...)
+}
+
+func restoreParamValue(param *match.Param) bool {
+	val, ok := restoreEscapedSlashValue(param.Val)
+	if !ok {
+		return false
+	}
+	param.Val = val
+	return true
 }
 
 func decodedMatchPath(path string) string {
