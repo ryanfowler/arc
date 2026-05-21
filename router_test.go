@@ -728,6 +728,86 @@ func TestTryHandleReturnsMatchErrors(t *testing.T) {
 	}
 }
 
+func TestTryHandleRejectsInvalidMethods(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+	}{
+		{
+			name:   "empty",
+			method: "",
+		},
+		{
+			name:   "whitespace",
+			method: " ",
+		},
+		{
+			name:   "space in token",
+			method: "BAD METHOD",
+		},
+		{
+			name:   "separator in token",
+			method: "BAD/METHOD",
+		},
+		{
+			name:   "non ascii",
+			method: "METH\xffD",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := New()
+			if err := r.TryHandle(tt.method, "/resource", writeStatus(http.StatusNoContent)); !errors.Is(err, ErrInvalidMethod) {
+				t.Fatalf("TryHandle invalid method error = %v, want ErrInvalidMethod", err)
+			}
+			if r.hasRoutes {
+				t.Fatal("router hasRoutes = true after failed registration, want false")
+			}
+		})
+	}
+}
+
+func TestTryHandleLowercaseMethodsAreCaseSensitiveTokens(t *testing.T) {
+	r := New()
+	if err := r.TryHandle("get", "/resource", writeStatus(http.StatusNoContent)); err != nil {
+		t.Fatalf("TryHandle lowercase method error = %v", err)
+	}
+
+	lower := httptest.NewRecorder()
+	r.ServeHTTP(lower, httptest.NewRequest("get", "/resource", nil))
+	assertStatus(t, lower, http.StatusNoContent)
+
+	upper := httptest.NewRecorder()
+	r.ServeHTTP(upper, httptest.NewRequest(http.MethodGet, "/resource", nil))
+	assertStatus(t, upper, http.StatusMethodNotAllowed)
+	if got, want := upper.Header().Get("Allow"), "get"; got != want {
+		t.Fatalf("Allow = %q, want %q", got, want)
+	}
+}
+
+func TestTryHandleAcceptsValidExtensionMethods(t *testing.T) {
+	tests := []string{
+		"PROPFIND",
+		"M-SEARCH",
+		"X_ARC.1+JSON",
+		"X!#$%&'*+-.^_`|~",
+	}
+
+	for _, method := range tests {
+		t.Run(method, func(t *testing.T) {
+			r := New()
+			if err := r.TryHandle(method, "/resource", writeStatus(http.StatusNoContent)); err != nil {
+				t.Fatalf("TryHandle extension method error = %v", err)
+			}
+
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(method, "/resource", nil))
+			assertStatus(t, rec, http.StatusNoContent)
+		})
+	}
+}
+
 func TestPathRegistrationsRejectNonAbsolutePatterns(t *testing.T) {
 	handler := writeStatus(http.StatusNoContent)
 	tests := []struct {

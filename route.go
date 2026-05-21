@@ -10,6 +10,9 @@ import (
 // handlers, the method helpers such as [Router.Get] and [Router.Post] are
 // usually shorter.
 //
+// The method must be a valid HTTP token. Extension methods are accepted and
+// method matching is case-sensitive.
+//
 // The pattern must begin with "/" and may contain named parameters such as
 // "/users/{id}" or catch-all parameters such as "/assets/{*path}". Invalid,
 // duplicate, or ambiguous patterns panic. Use [Router.TryHandle] to receive the
@@ -23,10 +26,13 @@ func (r *Router) Handle(method, pattern string, h http.Handler) {
 // TryHandle registers h for one HTTP method and path pattern and returns
 // registration errors.
 //
+// The method must be a valid HTTP token. Extension methods are accepted and
+// method matching is case-sensitive.
+//
 // Registration errors include non-absolute path patterns, invalid parameter
-// syntax, duplicate parameter names within the pattern, duplicate registrations,
-// and ambiguous patterns that could match the same requests. A nil handler is
-// treated as [http.NotFoundHandler].
+// syntax, duplicate parameter names within the pattern, invalid HTTP methods,
+// duplicate registrations, and ambiguous patterns that could match the same
+// requests. A nil handler is treated as [http.NotFoundHandler].
 func (r *Router) TryHandle(method, pattern string, h http.Handler) error {
 	return r.tryHandle(method, pattern, h, false)
 }
@@ -72,6 +78,9 @@ func (r *Router) tryHandle(method, pattern string, h http.Handler, anyMethod boo
 	if err := validateHTTPPathPattern(pattern); err != nil {
 		return err
 	}
+	if !anyMethod && !validHTTPMethod(method) {
+		return ErrInvalidMethod
+	}
 
 	if h == nil {
 		h = http.NotFoundHandler()
@@ -103,6 +112,36 @@ func handlerFuncOrNil(h http.HandlerFunc) http.Handler {
 		return nil
 	}
 	return h
+}
+
+func validHTTPMethod(method string) bool {
+	if method == "" {
+		return false
+	}
+	for i := 0; i < len(method); i++ {
+		if !isHTTPTokenChar(method[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isHTTPTokenChar(c byte) bool {
+	switch {
+	case c >= '0' && c <= '9':
+		return true
+	case c >= 'A' && c <= 'Z':
+		return true
+	case c >= 'a' && c <= 'z':
+		return true
+	}
+
+	switch c {
+	case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+		return true
+	default:
+		return false
+	}
 }
 
 // Get registers h for GET requests matching pattern.

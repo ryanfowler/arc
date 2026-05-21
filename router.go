@@ -33,6 +33,14 @@ var ErrDuplicateParamName = fmt.Errorf("%w: duplicate parameter names are not al
 // Mount treat an empty pattern as "/"; route registrations do not.
 var ErrInvalidPathPattern = errors.New("path patterns must begin with /")
 
+// ErrInvalidMethod reports a route method that is not a valid HTTP method
+// token.
+//
+// Methods registered with [Router.Handle] and [Router.TryHandle] must use the
+// HTTP token syntax. Extension methods are allowed, and method matching remains
+// case-sensitive.
+var ErrInvalidMethod = errors.New("HTTP methods must be valid tokens")
+
 // Middleware wraps an HTTP handler on a [Router].
 //
 // Middleware uses the same shape as standard net/http middleware. If a router

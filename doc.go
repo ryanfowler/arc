@@ -405,7 +405,9 @@
 //		return err
 //	}
 //
-// Route, subrouter, and mount path patterns that do not begin with "/" return
+// Route methods that are not valid HTTP tokens return ErrInvalidMethod.
+// Extension methods are accepted and method matching is case-sensitive. Route,
+// subrouter, and mount path patterns that do not begin with "/" return
 // ErrInvalidPathPattern. Patterns that capture the same parameter name more than
 // once return ErrDuplicateParamName. Other registration errors include invalid
 // parameter syntax, duplicate registrations, and ambiguous patterns that could
