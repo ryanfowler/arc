@@ -94,6 +94,13 @@ type routeRegistration struct {
 type routeMethods struct {
 	methods           []string
 	routes            map[string]*route
+	get               *route
+	post              *route
+	put               *route
+	patch             *route
+	delete            *route
+	head              *route
+	options           *route
 	anyRoute          *route
 	allow             string
 	allowImplicitHead string
@@ -543,29 +550,71 @@ func (m *routeMethods) addRoute(reg routeRegistration) error {
 		return nil
 	}
 
-	if m.routes == nil {
-		m.routes = make(map[string]*route)
-	}
-	if m.routes[reg.method] != nil {
+	if m.routeForMethod(reg.method) != nil {
 		return &match.ConflictError{Route: reg.pattern, With: reg.pattern}
 	}
 
-	m.routes[reg.method] = reg.route
+	m.setRouteForMethod(reg.method, reg.route)
 	m.add(reg.method)
 	return nil
 }
 
 func (m *routeMethods) routeFor(method string, implicitHead bool) *route {
-	if route := m.routes[method]; route != nil {
+	if route := m.routeForMethod(method); route != nil {
 		return route
 	}
 	if m.anyRoute != nil {
 		return m.anyRoute
 	}
 	if method == http.MethodHead && implicitHead {
-		return m.routes[http.MethodGet]
+		return m.get
 	}
 	return nil
+}
+
+func (m *routeMethods) routeForMethod(method string) *route {
+	switch method {
+	case http.MethodGet:
+		return m.get
+	case http.MethodPost:
+		return m.post
+	case http.MethodPut:
+		return m.put
+	case http.MethodPatch:
+		return m.patch
+	case http.MethodDelete:
+		return m.delete
+	case http.MethodHead:
+		return m.head
+	case http.MethodOptions:
+		return m.options
+	default:
+		return m.routes[method]
+	}
+}
+
+func (m *routeMethods) setRouteForMethod(method string, rt *route) {
+	switch method {
+	case http.MethodGet:
+		m.get = rt
+	case http.MethodPost:
+		m.post = rt
+	case http.MethodPut:
+		m.put = rt
+	case http.MethodPatch:
+		m.patch = rt
+	case http.MethodDelete:
+		m.delete = rt
+	case http.MethodHead:
+		m.head = rt
+	case http.MethodOptions:
+		m.options = rt
+	default:
+		if m.routes == nil {
+			m.routes = make(map[string]*route)
+		}
+		m.routes[method] = rt
+	}
 }
 
 func (m *routeMethods) add(method string) {
@@ -659,6 +708,10 @@ func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path strin
 		if decodeParams {
 			rawMountPath = escapedSlashRawPath(mountPath)
 			mountPath = decodedMatchPath(mountPath)
+		}
+		if len(c.middleware) == 0 {
+			c.handler.ServeHTTP(w, requestWithURLPath(req, mountPath, rawMountPath))
+			return
 		}
 		final := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			c.handler.ServeHTTP(w, requestWithURLPath(req, mountPath, rawMountPath))
@@ -839,13 +892,14 @@ func writeDecodedMatchChunk(b *strings.Builder, s string, escapeMarkers bool) {
 // pattern text. Parameter syntax is router grammar, so escapes inside params are
 // left alone; decoded slashes use the internal marker to stay within a segment.
 func normalizePercentEncodedPattern(pattern string) string {
-	if !hasPercentEncodedPattern(pattern) {
+	if strings.IndexByte(pattern, '%') < 0 {
 		return pattern
 	}
 
 	var b strings.Builder
 	b.Grow(len(pattern))
 	inParam := false
+	decoded := false
 	for i := 0; i < len(pattern); {
 		if inParam {
 			b.WriteByte(pattern[i])
@@ -902,6 +956,7 @@ func normalizePercentEncodedPattern(pattern string) string {
 				i++
 				continue
 			}
+			decoded = true
 			writePatternByte(&b, hi<<4|lo)
 			i += 3
 		default:
@@ -914,50 +969,10 @@ func normalizePercentEncodedPattern(pattern string) string {
 			i++
 		}
 	}
-	return b.String()
-}
-
-func hasPercentEncodedPattern(pattern string) bool {
-	inParam := false
-	for i := 0; i < len(pattern); {
-		if inParam {
-			if pattern[i] == '{' && i+1 < len(pattern) && pattern[i+1] == '{' {
-				i += 2
-				continue
-			}
-			if pattern[i] == '}' {
-				if i+1 < len(pattern) && pattern[i+1] == '}' {
-					i += 2
-					continue
-				}
-				inParam = false
-			}
-			i++
-			continue
-		}
-
-		switch pattern[i] {
-		case '{':
-			if i+1 < len(pattern) && pattern[i+1] == '{' {
-				i += 2
-				continue
-			}
-			inParam = true
-			i++
-		case '%':
-			if i+2 < len(pattern) {
-				if _, ok := fromHex(pattern[i+1]); ok {
-					if _, ok := fromHex(pattern[i+2]); ok {
-						return true
-					}
-				}
-			}
-			i++
-		default:
-			i++
-		}
+	if !decoded {
+		return pattern
 	}
-	return false
+	return b.String()
 }
 
 func validateUniqueParamNames(pattern string) error {
