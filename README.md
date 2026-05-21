@@ -97,8 +97,8 @@ header.
 ## Pattern Syntax
 
 Route, subrouter, and mount path patterns must be absolute paths beginning with
-`/`. Host patterns use the same parameter syntax but match `Request.Host`
-instead of `req.URL.Path`.
+`/`. Host patterns match `Request.Host` instead of `req.URL.Path` and use DNS
+labels separated by `.`.
 
 Literal text matches exactly. A named parameter, written `{name}`, captures one
 non-empty path segment. The value is exposed through
@@ -128,6 +128,16 @@ r.Get("/assets/{*path}", serveAsset)
 
 // GET /assets/css/app.css captures path = "css/app.css".
 // GET /assets does not match because the catch-all value would be empty.
+```
+
+Host parameters must occupy an entire DNS label and capture exactly one
+non-empty label. Host patterns do not support catch-all parameters.
+
+```go
+r.Host("{tenant}.example.com")
+
+// Host acme.example.com captures tenant = "acme".
+// Host a.b.example.com does not match.
 ```
 
 Literal braces are escaped by doubling them.
@@ -447,10 +457,12 @@ tenant.Get("/", func(w http.ResponseWriter, req *http.Request) {
 ```
 
 Host matching is case-insensitive for literal host text, while parameter names
-keep their original case. A pattern such as `{tenant}.example.com` captures the
-variable text before `.example.com`. A port in `Request.Host` is ignored before
-matching. Brackets around IPv6 literals are also ignored, so `[::1]` and
-`[::1]:8080` match the host pattern `::1`.
+keep their original case. A pattern such as `{tenant}.example.com` captures one
+DNS label before `.example.com`; use another parameter label to match another
+subdomain level. Trailing dots are ignored, IDNs are normalized to punycode, and
+a port in `Request.Host` is ignored before matching. Brackets around IPv6
+literals are also ignored, so `[::1]` and `[::1]:8080` match the host pattern
+`::1`.
 
 If no host pattern matches, Arc continues dispatching through the parent
 router's ordinary routes, subrouters, and mounts.
@@ -521,16 +533,18 @@ if err != nil {
 Route methods that are not valid HTTP tokens return `arc.ErrInvalidMethod`.
 Extension methods are accepted and method matching is case-sensitive. Route,
 subrouter, and mount path patterns that do not begin with `/` return
-`arc.ErrInvalidPathPattern`. Patterns that capture the same parameter name more
+`arc.ErrInvalidPathPattern`. Empty host patterns, host patterns with invalid DNS
+characters, and host patterns with non-label parameter syntax return
+`arc.ErrInvalidHostPattern`. Patterns that capture the same parameter name more
 than once return `arc.ErrDuplicateParamName`. Other registration errors include
 invalid parameter syntax, duplicate registrations, and ambiguous patterns that
 could match the same requests.
 
-Arc's low-level pattern matcher is
-[`github.com/ryanfowler/match`](https://github.com/ryanfowler/match), but the
+Arc uses [`github.com/ryanfowler/match`](https://github.com/ryanfowler/match)
+for path pattern matching. Host routing uses Arc's DNS-label matcher. The
 matching behavior documented here is the Arc contract. Applications usually do
-not need to use it directly, though advanced callers may inspect the syntax and
-conflict errors returned by `Try` registrations.
+not need to use the low-level matcher directly, though advanced callers may
+inspect the syntax and conflict errors returned by `Try` registrations.
 
 ## Child Router Configuration
 

@@ -3,7 +3,6 @@ package arc
 import (
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -32,6 +31,15 @@ var ErrDuplicateParamName = fmt.Errorf("%w: duplicate parameter names are not al
 // [Router.SubRouter], and [Router.Mount] must begin with "/". SubRouter and
 // Mount treat an empty pattern as "/"; route registrations do not.
 var ErrInvalidPathPattern = errors.New("path patterns must begin with /")
+
+// ErrInvalidHostPattern reports a host router pattern that is empty, contains
+// characters outside valid DNS host syntax, or uses parameter syntax that host
+// patterns do not support.
+//
+// Host patterns registered with [Router.Host] and [Router.TryHost] must be a
+// valid DNS host name, an IPv6 literal, or a DNS host name with parameters that
+// occupy an entire label, such as "{tenant}.example.com".
+var ErrInvalidHostPattern = fmt.Errorf("%w: host patterns must be valid DNS names, IP literals, or label parameters", match.ErrInvalidParam)
 
 // ErrInvalidMethod reports a route method that is not a valid HTTP method
 // token.
@@ -64,7 +72,7 @@ type Router struct {
 	pathRoutes             match.Router[*pathEntry]
 	pathEntries            map[string]*pathEntry
 	pathPatterns           []string
-	hostRoutes             match.Router[*childRouter]
+	hostRoutes             hostMatcher[*childRouter]
 	hasDynamicPathPatterns bool
 	hasHosts               bool
 	hasRoutes              bool
@@ -803,81 +811,6 @@ func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path strin
 	}
 
 	c.router.serve(w, req, path, params, decodeParams)
-}
-
-func normalizeRequestHost(host string) string {
-	if isLowercaseASCIIHost(host) {
-		return host
-	}
-	return strings.ToLower(normalizeHostAddress(hostWithoutPort(host)))
-}
-
-func isLowercaseASCIIHost(host string) bool {
-	for i := 0; i < len(host); i++ {
-		c := host[i]
-		if c >= 'A' && c <= 'Z' {
-			return false
-		}
-		if c == ':' || c == '[' || c == ']' || c >= 0x80 {
-			return false
-		}
-	}
-	return true
-}
-
-func normalizeHostPattern(pattern string) string {
-	return lowercasePatternLiterals(normalizeHostAddress(hostWithoutPort(pattern)))
-}
-
-func hostWithoutPort(host string) string {
-	if host == "" {
-		return ""
-	}
-
-	if i := strings.LastIndexByte(host, ':'); i > 0 && strings.IndexByte(host[:i], ':') == -1 {
-		return host[:i]
-	}
-
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		return h
-	}
-	return host
-}
-
-func normalizeHostAddress(host string) string {
-	if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' && strings.IndexByte(host, ':') != -1 {
-		host = host[1 : len(host)-1]
-	}
-	return host
-}
-
-func lowercasePatternLiterals(pattern string) string {
-	var b strings.Builder
-	b.Grow(len(pattern))
-
-	literalStart := 0
-	for i := 0; i < len(pattern); {
-		if pattern[i] == '{' {
-			if i+1 < len(pattern) && pattern[i+1] == '{' {
-				i += 2
-				continue
-			}
-
-			end, err := findPatternParamEnd(pattern, i+1)
-			if err == nil {
-				b.WriteString(strings.ToLower(pattern[literalStart:i]))
-				b.WriteString(pattern[i : end+1])
-				i = end + 1
-				literalStart = i
-				continue
-			}
-		}
-
-		i++
-	}
-	b.WriteString(strings.ToLower(pattern[literalStart:]))
-
-	return b.String()
 }
 
 func requestForHandler(req *http.Request, params match.Params, pattern string) *http.Request {

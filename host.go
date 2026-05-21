@@ -1,7 +1,5 @@
 package arc
 
-import "github.com/ryanfowler/match"
-
 // Host registers and returns a child router for requests whose host matches
 // pattern.
 //
@@ -14,11 +12,13 @@ import "github.com/ryanfowler/match"
 //	tenant := r.Host("{tenant}.example.com")
 //	tenant.Get("/", tenantHome)
 //
-// Host patterns use Arc's parameter syntax. For example, "api.example.com"
-// matches one literal host and "{tenant}.example.com" captures the variable
-// text before ".example.com" as "tenant". Request hosts are matched
-// case-insensitively, a port in Request.Host is ignored, and brackets around
-// IPv6 literals are ignored.
+// Host patterns are DNS-label patterns. For example, "api.example.com" matches
+// one literal host and "{tenant}.example.com" captures exactly one DNS label
+// before ".example.com" as "tenant". Host parameters must occupy an entire
+// label, so "{tenant}.example.com" matches "acme.example.com" but not
+// "a.b.example.com". Request hosts are matched case-insensitively, trailing
+// dots are ignored, IDNs are normalized to punycode, a port in Request.Host is
+// ignored, and brackets around IPv6 literals are ignored.
 //
 // Parameters captured by the host pattern are available to handlers registered
 // on the returned router through [http.Request.PathValue]. If no host pattern
@@ -45,19 +45,12 @@ func (r *Router) Host(pattern string) *Router {
 // TryHost registers and returns a child router for requests whose host matches
 // pattern, and returns registration errors.
 //
-// Registration errors include empty normalized hosts, invalid parameter syntax,
+// Registration errors include ErrInvalidHostPattern, invalid parameter syntax,
 // duplicate parameter names within the pattern, duplicate host patterns, and
 // ambiguous host patterns that could match the same requests.
 func (r *Router) TryHost(pattern string) (*Router, error) {
 	child := newChildRouter(r)
-	matchPattern := normalizeHostPattern(pattern)
-	if matchPattern == "" {
-		return nil, match.ErrInvalidParam
-	}
-	if err := validateUniqueParamNames(matchPattern); err != nil {
-		return nil, err
-	}
-	if err := r.hostRoutes.TryInsert(matchPattern, child); err != nil {
+	if err := r.hostRoutes.TryInsert(pattern, child); err != nil {
 		return nil, err
 	}
 	r.hasHosts = true

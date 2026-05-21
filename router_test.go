@@ -903,7 +903,7 @@ func TestRegistrationRejectsDuplicateParamNames(t *testing.T) {
 		{
 			name: "host",
 			register: func(r *Router) error {
-				_, err := r.TryHost("{id}/{id}.example.com")
+				_, err := r.TryHost("{id}.{id}.example.com")
 				return err
 			},
 		},
@@ -2122,6 +2122,110 @@ func TestHostRouterMatchesAndMergesParams(t *testing.T) {
 	}
 }
 
+func TestHostRouterParamsCaptureOneDNSLabel(t *testing.T) {
+	r := New()
+	tenant := r.Host("{tenant}.example.com")
+	tenant.Get("/", writeStatus(http.StatusNoContent))
+	r.Get("/", writeStatus(http.StatusAccepted))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://a.b.example.com/", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestHostRouterMatchesMultipleParameterizedLabels(t *testing.T) {
+	r := New()
+	host := r.Host("{region}.{tenant}.example.com")
+	host.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("region"); got != "us-west" {
+			t.Fatalf("PathValue(region) = %q, want %q", got, "us-west")
+		}
+		if got := req.PathValue("tenant"); got != "acme" {
+			t.Fatalf("PathValue(tenant) = %q, want %q", got, "acme")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://us-west.acme.example.com/", nil))
+
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func TestHostRouterSharesParamBranchAcrossDisjointHosts(t *testing.T) {
+	r := New()
+	tenant := r.Host("{tenant}.example.com")
+	tenant.Get("/", writeStatus(http.StatusAccepted))
+	account := r.Host("{account}.api.com")
+	account.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("account"); got != "acme" {
+			t.Fatalf("PathValue(account) = %q, want %q", got, "acme")
+		}
+		if got := req.PathValue("tenant"); got != "" {
+			t.Fatalf("PathValue(tenant) = %q, want empty", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://acme.api.com/", nil))
+
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func TestHostRouterDiscardsParamsFromFailedStaticBranch(t *testing.T) {
+	r := New()
+	deeper := r.Host("api.{unused}.internal.example.com")
+	deeper.Get("/", writeStatus(http.StatusAccepted))
+	tenant := r.Host("{tenant}.example.com")
+	tenant.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("tenant"); got != "api" {
+			t.Fatalf("PathValue(tenant) = %q, want %q", got, "api")
+		}
+		if got := req.PathValue("unused"); got != "" {
+			t.Fatalf("PathValue(unused) = %q, want empty", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil))
+
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func TestHostRouterNormalizesTrailingDot(t *testing.T) {
+	r := New()
+	api := r.Host("api.example.com.")
+	api.Get("/", writeStatus(http.StatusNoContent))
+
+	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
+	req.Host = "API.example.com."
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func TestHostRouterNormalizesIDNA(t *testing.T) {
+	r := New()
+	host := r.Host("bücher.example.com")
+	host.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.Host; got != "XN--BCHER-KVA.example.com" {
+			t.Fatalf("req.Host = %q, want original Host header", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://xn--bcher-kva.example.com/", nil)
+	req.Host = "XN--BCHER-KVA.example.com"
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
 func TestHostRouterPreservesParamNameCase(t *testing.T) {
 	r := New()
 	tenant := r.Host("{Tenant}.Example.COM")
@@ -2179,8 +2283,8 @@ func TestHostRouterPrefersStaticHost(t *testing.T) {
 
 func TestTryHostReturnsMatchErrors(t *testing.T) {
 	r := New()
-	if child, err := r.TryHost("{}.example.com"); !errors.Is(err, match.ErrInvalidParam) {
-		t.Fatalf("TryHost invalid param child, error = %v, %v; want ErrInvalidParam", child, err)
+	if child, err := r.TryHost("{}.example.com"); !errors.Is(err, ErrInvalidHostPattern) {
+		t.Fatalf("TryHost invalid param child, error = %v, %v; want ErrInvalidHostPattern", child, err)
 	}
 	if r.hasHosts {
 		t.Fatal("router hasHosts = true after failed first TryHost, want false")
@@ -2197,23 +2301,44 @@ func TestTryHostReturnsMatchErrors(t *testing.T) {
 		t.Fatalf("TryHost duplicate child, error = %v, %v; want *match.ConflictError", child, err)
 	}
 
+	tenant, err := r.TryHost("{tenant}.example.com")
+	if err != nil {
+		t.Fatalf("TryHost dynamic host error = %v", err)
+	}
+	tenant.Get("/tenant", writeStatus(http.StatusNoContent))
+	if child, err := r.TryHost("{account}.example.com"); !errors.As(err, &conflict) {
+		t.Fatalf("TryHost duplicate dynamic child, error = %v, %v; want *match.ConflictError", child, err)
+	}
+	if child, err := r.TryHost("api.{domain}.com"); !errors.As(err, &conflict) {
+		t.Fatalf("TryHost ambiguous host child, error = %v, %v; want *match.ConflictError", child, err)
+	}
+
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil))
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
-func TestTryHostRejectsEmptyNormalizedHost(t *testing.T) {
+func TestTryHostRejectsInvalidHostPatterns(t *testing.T) {
 	tests := []string{
 		"",
+		".",
 		":80",
+		"api..example.com",
+		".example.com",
+		"bad_host.example.com",
+		"-bad.example.com",
+		"bad-.example.com",
+		"{tenant}-api.example.com",
+		"{*tenant}.example.com",
+		"api.example.com:8080",
 	}
 
 	for _, pattern := range tests {
 		t.Run(pattern, func(t *testing.T) {
 			r := New()
 			child, err := r.TryHost(pattern)
-			if !errors.Is(err, match.ErrInvalidParam) {
-				t.Fatalf("TryHost(%q) child, error = %v, %v; want ErrInvalidParam", pattern, child, err)
+			if !errors.Is(err, ErrInvalidHostPattern) {
+				t.Fatalf("TryHost(%q) child, error = %v, %v; want ErrInvalidHostPattern", pattern, child, err)
 			}
 			if child != nil {
 				t.Fatalf("TryHost(%q) child = %v, want nil", pattern, child)
@@ -2294,9 +2419,24 @@ func TestNormalizeRequestHost(t *testing.T) {
 			want: "api.example.com",
 		},
 		{
+			name: "trailing_dot",
+			host: "api.example.com.",
+			want: "api.example.com",
+		},
+		{
 			name: "port",
 			host: "api.example.com:8080",
 			want: "api.example.com",
+		},
+		{
+			name: "trailing_dot_with_port",
+			host: "api.example.com.:8080",
+			want: "api.example.com",
+		},
+		{
+			name: "invalid_port",
+			host: "api.example.com:http",
+			want: "",
 		},
 		{
 			name: "bracketed_ipv6",
@@ -2305,8 +2445,18 @@ func TestNormalizeRequestHost(t *testing.T) {
 		},
 		{
 			name: "unicode",
-			host: "CAFÉ.example.com",
-			want: "café.example.com",
+			host: "BÜCHER.example.com.",
+			want: "xn--bcher-kva.example.com",
+		},
+		{
+			name: "uppercase_punycode",
+			host: "XN--BCHER-KVA.example.com",
+			want: "xn--bcher-kva.example.com",
+		},
+		{
+			name: "invalid_dns_name",
+			host: "bad_host.example.com",
+			want: "",
 		},
 	}
 
