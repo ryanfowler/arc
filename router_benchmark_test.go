@@ -54,6 +54,38 @@ func BenchmarkRouterHandle(b *testing.B) {
 	}
 }
 
+func BenchmarkRouterSubRouter(b *testing.B) {
+	for _, subRouterCount := range []int{1, 10, 100, 1000} {
+		b.Run(strconv.Itoa(subRouterCount)+"_entries", func(b *testing.B) {
+			b.ReportAllocs()
+
+			for i := 0; i < b.N; i++ {
+				r := New()
+				for subRouter := 0; subRouter < subRouterCount; subRouter++ {
+					r.SubRouter("/api/" + strconv.Itoa(subRouter))
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkRouterMount(b *testing.B) {
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+
+	for _, mountCount := range []int{1, 10, 100, 1000} {
+		b.Run(strconv.Itoa(mountCount)+"_entries", func(b *testing.B) {
+			b.ReportAllocs()
+
+			for i := 0; i < b.N; i++ {
+				r := New()
+				for mount := 0; mount < mountCount; mount++ {
+					r.Mount("/assets/"+strconv.Itoa(mount), handler)
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkNormalizePercentEncodedPattern(b *testing.B) {
 	benchmarks := []struct {
 		name    string

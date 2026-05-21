@@ -53,13 +53,14 @@ type Middleware func(http.Handler) http.Handler
 // registration and configuration methods are not safe to call concurrently with
 // ServeHTTP or with other registration and configuration methods.
 type Router struct {
-	pathRoutes    match.Router[*pathEntry]
-	pathEntries   map[string]*pathEntry
-	pathPatterns  []string
-	hostRoutes    match.Router[*childRouter]
-	hasHosts      bool
-	hasRoutes     bool
-	hasSubRouters bool
+	pathRoutes             match.Router[*pathEntry]
+	pathEntries            map[string]*pathEntry
+	pathPatterns           []string
+	hostRoutes             match.Router[*childRouter]
+	hasDynamicPathPatterns bool
+	hasHosts               bool
+	hasRoutes              bool
+	hasSubRouters          bool
 
 	middleware []Middleware
 
@@ -443,6 +444,9 @@ func insertRouteRegistration(r *Router, reg routeRegistration) error {
 		}
 		r.pathEntries[reg.pattern] = entry
 		r.pathPatterns = append(r.pathPatterns, reg.pattern)
+		if isDynamicMatchPattern(reg.pattern) {
+			r.hasDynamicPathPatterns = true
+		}
 	}
 
 	if entry.methods == nil {
@@ -462,83 +466,153 @@ type childPathRegistration struct {
 	child   *childRouter
 }
 
+type pendingChildPathEntry struct {
+	pattern string
+	child   *childRouter
+	entry   *pathEntry
+	new     bool
+}
+
 func (r *Router) insertChildPathEntries(regs []childPathRegistration) error {
-	nextRoutes, nextEntries, nextPatterns, err := r.clonePathEntries()
-	if err != nil {
-		return err
+	if r.canInsertStaticChildPathEntries(regs) {
+		return r.insertStaticChildPathEntries(regs)
 	}
 
+	return r.insertTransactionalChildPathEntries(regs)
+}
+
+func (r *Router) canInsertStaticChildPathEntries(regs []childPathRegistration) bool {
+	if r.hasDynamicPathPatterns {
+		return false
+	}
 	for _, reg := range regs {
-		entry := nextEntries[reg.pattern]
+		if isDynamicMatchPattern(reg.pattern) {
+			return false
+		}
+	}
+	return true
+}
+
+// When the matcher contains only literal patterns, new literal patterns can
+// only conflict by exact duplicate, so the static path can validate with
+// pathEntries and commit directly. Dynamic patterns use the cloned matcher
+// transaction below.
+func (r *Router) insertStaticChildPathEntries(regs []childPathRegistration) error {
+	seen := make(map[string]struct{}, len(regs))
+	pending := make([]pendingChildPathEntry, 0, len(regs))
+
+	for _, reg := range regs {
+		if _, ok := seen[reg.pattern]; ok {
+			return &match.ConflictError{Route: reg.pattern, With: reg.pattern}
+		}
+		seen[reg.pattern] = struct{}{}
+
+		entry := r.pathEntries[reg.pattern]
 		if entry != nil {
 			if entry.child != nil {
 				return &match.ConflictError{Route: reg.pattern, With: reg.pattern}
 			}
-			entry.child = reg.child
+			pending = append(pending, pendingChildPathEntry{
+				pattern: reg.pattern,
+				child:   reg.child,
+				entry:   entry,
+			})
+			continue
+		}
+
+		pending = append(pending, pendingChildPathEntry{
+			pattern: reg.pattern,
+			entry: &pathEntry{
+				child: reg.child,
+			},
+			new: true,
+		})
+	}
+
+	if r.pathEntries == nil {
+		r.pathEntries = make(map[string]*pathEntry, len(pending))
+	}
+	for _, entry := range pending {
+		if entry.new {
+			if err := r.pathRoutes.TryInsert(entry.pattern, entry.entry); err != nil {
+				return err
+			}
+			r.pathEntries[entry.pattern] = entry.entry
+			r.pathPatterns = append(r.pathPatterns, entry.pattern)
+			continue
+		}
+		entry.entry.child = entry.child
+	}
+
+	return nil
+}
+
+func (r *Router) insertTransactionalChildPathEntries(regs []childPathRegistration) error {
+	seen := make(map[string]struct{}, len(regs))
+	pending := make([]pendingChildPathEntry, 0, len(regs))
+	var nextRoutes match.Router[*pathEntry]
+	routesCloned := false
+
+	for _, reg := range regs {
+		if _, ok := seen[reg.pattern]; ok {
+			return &match.ConflictError{Route: reg.pattern, With: reg.pattern}
+		}
+		seen[reg.pattern] = struct{}{}
+
+		entry := r.pathEntries[reg.pattern]
+		if entry != nil {
+			if entry.child != nil {
+				return &match.ConflictError{Route: reg.pattern, With: reg.pattern}
+			}
+			pending = append(pending, pendingChildPathEntry{
+				pattern: reg.pattern,
+				child:   reg.child,
+				entry:   entry,
+			})
 			continue
 		}
 
 		entry = &pathEntry{
 			child: reg.child,
 		}
+		if !routesCloned {
+			nextRoutes = r.pathRoutes.Clone()
+			routesCloned = true
+		}
 		if err := nextRoutes.TryInsert(reg.pattern, entry); err != nil {
 			return err
 		}
-		nextEntries[reg.pattern] = entry
-		nextPatterns = append(nextPatterns, reg.pattern)
+		pending = append(pending, pendingChildPathEntry{
+			pattern: reg.pattern,
+			entry:   entry,
+			new:     true,
+		})
 	}
 
-	r.pathRoutes = nextRoutes
-	r.pathEntries = nextEntries
-	r.pathPatterns = nextPatterns
+	if routesCloned {
+		r.pathRoutes = nextRoutes
+	}
+	if r.pathEntries == nil {
+		r.pathEntries = make(map[string]*pathEntry, len(pending))
+	}
+
+	for _, entry := range pending {
+		if entry.new {
+			r.pathEntries[entry.pattern] = entry.entry
+			r.pathPatterns = append(r.pathPatterns, entry.pattern)
+			if isDynamicMatchPattern(entry.pattern) {
+				r.hasDynamicPathPatterns = true
+			}
+			continue
+		}
+		entry.entry.child = entry.child
+	}
+
 	return nil
 }
 
-func (r *Router) clonePathEntries() (match.Router[*pathEntry], map[string]*pathEntry, []string, error) {
-	var routes match.Router[*pathEntry]
-	entries := make(map[string]*pathEntry, len(r.pathEntries))
-	patterns := make([]string, 0, len(r.pathPatterns))
-
-	for _, pattern := range r.pathPatterns {
-		entry := r.pathEntries[pattern]
-		if entry == nil {
-			continue
-		}
-		clone := clonePathEntry(entry)
-		if err := routes.TryInsert(pattern, clone); err != nil {
-			return match.Router[*pathEntry]{}, nil, nil, err
-		}
-		entries[pattern] = clone
-		patterns = append(patterns, pattern)
-	}
-
-	return routes, entries, patterns, nil
-}
-
-func clonePathEntry(entry *pathEntry) *pathEntry {
-	if entry == nil {
-		return nil
-	}
-	return &pathEntry{
-		methods: cloneRouteMethods(entry.methods),
-		child:   entry.child,
-	}
-}
-
-func cloneRouteMethods(methods *routeMethods) *routeMethods {
-	if methods == nil {
-		return nil
-	}
-
-	clone := *methods
-	clone.methods = append([]string(nil), methods.methods...)
-	if methods.routes != nil {
-		clone.routes = make(map[string]*route, len(methods.routes))
-		for method, route := range methods.routes {
-			clone.routes[method] = route
-		}
-	}
-	return &clone
+func isDynamicMatchPattern(pattern string) bool {
+	return strings.ContainsAny(pattern, "{}")
 }
 
 func (m *routeMethods) addRoute(reg routeRegistration) error {
