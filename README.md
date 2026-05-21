@@ -518,7 +518,9 @@ if err != nil {
 }
 ```
 
-Route, subrouter, and mount path patterns that do not begin with `/` return
+Route methods that are not valid HTTP tokens return `arc.ErrInvalidMethod`.
+Extension methods are accepted and method matching is case-sensitive. Route,
+subrouter, and mount path patterns that do not begin with `/` return
 `arc.ErrInvalidPathPattern`. Patterns that capture the same parameter name more
 than once return `arc.ErrDuplicateParamName`. Other registration errors include
 invalid parameter syntax, duplicate registrations, and ambiguous patterns that
