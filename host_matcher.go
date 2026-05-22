@@ -3,7 +3,6 @@ package arc
 import (
 	"errors"
 	"net"
-	"net/netip"
 	"strings"
 
 	"github.com/ryanfowler/match"
@@ -18,7 +17,6 @@ const (
 
 type hostMatcher[T any] struct {
 	dnsRoutes dns.Router[T]
-	ipRoutes  map[string]T
 }
 
 type hostLabelPattern struct {
@@ -27,23 +25,9 @@ type hostLabelPattern struct {
 }
 
 func (m *hostMatcher[T]) TryInsert(pattern string, value T) error {
-	host, ipLiteral, err := normalizeHostPattern(pattern)
+	host, err := normalizeHostPattern(pattern)
 	if err != nil {
 		return err
-	}
-
-	if ipLiteral {
-		if m.ipRoutes == nil {
-			m.ipRoutes = make(map[string]T)
-		}
-		if _, ok := m.ipRoutes[host]; ok {
-			return &match.ConflictError{
-				Route: host,
-				With:  host,
-			}
-		}
-		m.ipRoutes[host] = value
-		return nil
 	}
 
 	if err := m.dnsRoutes.TryInsert(host, value); err != nil {
@@ -64,37 +48,31 @@ func hostInsertError(err error) error {
 }
 
 func (m *hostMatcher[T]) Match(host string) (T, match.Params, bool) {
-	if isIPv6Literal(host) {
-		if m.ipRoutes != nil {
-			if value, ok := m.ipRoutes[host]; ok {
-				return value, match.Params{}, true
-			}
-		}
-		var zero T
-		return zero, match.Params{}, false
-	}
 	return m.dnsRoutes.Match(host)
 }
 
-func normalizeHostPattern(pattern string) (string, bool, error) {
+func normalizeHostPattern(pattern string) (string, error) {
 	if pattern == "" {
-		return "", false, ErrInvalidHostPattern
+		return "", ErrInvalidHostPattern
 	}
-	if h, port, err := net.SplitHostPort(pattern); err == nil && h != "" && port != "" {
-		return "", false, ErrInvalidHostPattern
+	if _, port, err := net.SplitHostPort(pattern); err == nil && port != "" {
+		return "", ErrInvalidHostPattern
 	}
 
 	host := normalizeHostAddress(pattern)
-	if isIPv6Literal(host) {
-		return strings.ToLower(host), true, nil
-	}
-	if strings.ContainsAny(host, "[]:") {
-		return "", false, ErrInvalidHostPattern
+	if strings.ContainsAny(host, "[]") {
+		return "", ErrInvalidHostPattern
 	}
 
 	host = trimTrailingHostDot(host)
 	if host == "" {
-		return "", false, ErrInvalidHostPattern
+		return "", ErrInvalidHostPattern
+	}
+	if strings.IndexByte(host, ':') != -1 {
+		if hasExactlyOneColon(host) {
+			return "", ErrInvalidHostPattern
+		}
+		return host, nil
 	}
 
 	var labels []hostLabelPattern
@@ -107,16 +85,16 @@ func normalizeHostPattern(pattern string) (string, bool, error) {
 			end++
 		}
 		if end == start {
-			return "", false, ErrInvalidHostPattern
+			return "", ErrInvalidHostPattern
 		}
 
 		label, err := normalizeHostPatternLabel(host[start:end], labelIndex)
 		if err != nil {
-			return "", false, err
+			return "", err
 		}
 		if label.paramName != "" {
 			if err := checkHostParamName(label.paramName, &seenNames, &seenCount, &seenMap); err != nil {
-				return "", false, err
+				return "", err
 			}
 		}
 		labels = append(labels, label)
@@ -128,9 +106,9 @@ func normalizeHostPattern(pattern string) (string, bool, error) {
 	}
 
 	if len(labels) == 0 {
-		return "", false, ErrInvalidHostPattern
+		return "", ErrInvalidHostPattern
 	}
-	return joinHostPattern(labels, "."), false, nil
+	return joinHostPattern(labels, "."), nil
 }
 
 func normalizeHostPatternLabel(label string, labelIndex int) (hostLabelPattern, error) {
@@ -313,8 +291,11 @@ func joinHostPattern(labels []hostLabelPattern, sep string) string {
 func normalizeRequestHost(host string) string {
 	host = requestHostWithoutPort(host)
 	host = normalizeHostAddress(host)
-	if isIPv6Literal(host) {
-		return strings.ToLower(host)
+	if strings.IndexByte(host, ':') != -1 {
+		if hasExactlyOneColon(host) {
+			return ""
+		}
+		return strings.ToLower(trimTrailingHostDot(host))
 	}
 
 	normalized, ok := normalizeDNSHost(host)
@@ -445,12 +426,9 @@ func trimTrailingHostDot(host string) string {
 	return host
 }
 
-func isIPv6Literal(host string) bool {
-	if strings.IndexByte(host, ':') == -1 {
-		return false
-	}
-	addr, err := netip.ParseAddr(host)
-	return err == nil && addr.Is6() && addr.Zone() == ""
+func hasExactlyOneColon(host string) bool {
+	first := strings.IndexByte(host, ':')
+	return first != -1 && strings.IndexByte(host[first+1:], ':') == -1
 }
 
 func isASCIIDigits(s string) bool {
