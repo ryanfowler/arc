@@ -3,6 +3,7 @@ package arc
 import (
 	"errors"
 	"net"
+	"net/netip"
 	"strings"
 
 	"github.com/ryanfowler/match"
@@ -445,7 +446,11 @@ func trimTrailingHostDot(host string) string {
 }
 
 func isIPv6Literal(host string) bool {
-	return strings.IndexByte(host, ':') != -1 && net.ParseIP(host) != nil
+	if strings.IndexByte(host, ':') == -1 {
+		return false
+	}
+	addr, err := netip.ParseAddr(host)
+	return err == nil && addr.Is6() && addr.Zone() == ""
 }
 
 func isASCIIDigits(s string) bool {
