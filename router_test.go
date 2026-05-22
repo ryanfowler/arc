@@ -2421,6 +2421,7 @@ func TestTryHostRejectsInvalidHostPatterns(t *testing.T) {
 		"api.{*tenant}.example.com",
 		"api-{*tenant}x.example.com",
 		"api.example.com:8080",
+		"api.example.com:http",
 	}
 
 	for _, pattern := range tests {
@@ -2492,16 +2493,21 @@ func TestHostRouterNormalizesBracketedIPv6HostWithoutPort(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
-func TestHostRouterParamDoesNotCaptureIPv6Literal(t *testing.T) {
+func TestHostRouterParamCapturesIPv6Literal(t *testing.T) {
 	r := New()
 	host := r.Host("{host}")
-	host.Get("/", writeStatus(http.StatusNoContent))
+	host.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("host"); got != "::1" {
+			t.Fatalf("host param = %q, want ::1", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	r.Get("/", writeStatus(http.StatusAccepted))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://[::1]/", nil))
 
-	assertStatus(t, rec, http.StatusAccepted)
+	assertStatus(t, rec, http.StatusNoContent)
 }
 
 func TestNormalizeRequestHost(t *testing.T) {

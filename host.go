@@ -29,8 +29,9 @@ package arc
 //
 // Request hosts are normalized before matching: trailing dots are ignored, IDNs
 // are normalized to punycode, a numeric port in Request.Host is ignored, and
-// brackets around IPv6 literals are ignored. Host patterns themselves must not
-// include a port. IPv6 literals only match literal IPv6 host patterns.
+// brackets around colon-form hosts are ignored. Host patterns themselves must
+// not include a port. IPv6 literals are matched as ordinary single-label hosts,
+// so a pattern such as "{host}" can capture "::1".
 //
 // Parameters captured by the host pattern are available to handlers registered
 // on the returned router through [http.Request.PathValue]. If no host pattern

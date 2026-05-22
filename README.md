@@ -135,7 +135,8 @@ parameter matches one non-empty DNS label, either as a whole label or with
 literal text around it; when literal text is present, only the parameter part is
 captured. Each host label can contain at most one parameter. A host catch-all
 parameter captures one or more leading labels and must appear in the leftmost
-label. An IPv6 literal only matches an IPv6 literal host pattern.
+label. IPv6 literals are matched as ordinary single-label hosts, so a pattern
+such as `{host}` can capture `::1`.
 
 ```go
 r.Host("{tenant}.example.com")
@@ -480,9 +481,9 @@ their original case. Captured host parameter values come from the normalized
 host, so ASCII letters are lowercase and IDNs are punycode.
 
 Trailing dots are ignored, IDNs are normalized to punycode, and a numeric port
-in `Request.Host` is ignored before matching. Brackets around IPv6 literals are
-also ignored, so `[::1]` and `[::1]:8080` match the host pattern `::1`. Host
-patterns themselves must not include a port.
+in `Request.Host` is ignored before matching. Brackets around colon-form hosts
+are also ignored, so `[::1]` and `[::1]:8080` match the host pattern `::1`.
+Host patterns themselves must not include a port.
 
 Literal labels are more specific than parameter labels. If both
 `api.example.com` and `{tenant}.example.com` are registered, `api.example.com`
