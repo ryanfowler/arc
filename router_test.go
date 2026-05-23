@@ -13,6 +13,35 @@ import (
 
 var normalizeHostSink string
 
+type allocationResponseWriter struct {
+	header http.Header
+	status int
+}
+
+func (w *allocationResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *allocationResponseWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return len(p), nil
+}
+
+func (w *allocationResponseWriter) WriteHeader(status int) {
+	w.status = status
+}
+
+func allocationMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		next.ServeHTTP(w, req)
+	})
+}
+
 func TestRouterMatchesRouteAndParams(t *testing.T) {
 	r := New()
 	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
@@ -428,6 +457,15 @@ func TestRouterReturnsNotFound(t *testing.T) {
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/missing", nil))
 
 	assertStatus(t, rec, http.StatusNotFound)
+	if got, want := rec.Body.String(), "404 page not found\n"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+	if got, want := rec.Header().Get("Content-Type"), "text/plain; charset=utf-8"; got != want {
+		t.Fatalf("Content-Type = %q, want %q", got, want)
+	}
+	if got, want := rec.Header().Get("X-Content-Type-Options"), "nosniff"; got != want {
+		t.Fatalf("X-Content-Type-Options = %q, want %q", got, want)
+	}
 }
 
 func TestRouterReturnsMethodNotAllowed(t *testing.T) {
@@ -442,6 +480,64 @@ func TestRouterReturnsMethodNotAllowed(t *testing.T) {
 	}
 	if got, want := rec.Header().Get("Allow"), "GET, HEAD"; got != want {
 		t.Fatalf("Allow = %q, want %q", got, want)
+	}
+}
+
+func TestRouterDefaultFallbackHandlersAllocateZero(t *testing.T) {
+	tests := []struct {
+		name string
+		new  func() (*Router, *http.Request)
+	}{
+		{
+			name: "not_found_without_middleware",
+			new: func() (*Router, *http.Request) {
+				r := New()
+				r.Get("/known", writeStatus(http.StatusNoContent))
+				return r, httptest.NewRequest(http.MethodGet, "/missing", nil)
+			},
+		},
+		{
+			name: "method_not_allowed_without_middleware",
+			new: func() (*Router, *http.Request) {
+				r := New()
+				r.Get("/users/{id}", writeStatus(http.StatusNoContent))
+				return r, httptest.NewRequest(http.MethodPost, "/users/42", nil)
+			},
+		},
+		{
+			name: "not_found_with_middleware",
+			new: func() (*Router, *http.Request) {
+				r := New()
+				r.Use(allocationMiddleware)
+				r.Get("/known", writeStatus(http.StatusNoContent))
+				return r, httptest.NewRequest(http.MethodGet, "/missing", nil)
+			},
+		},
+		{
+			name: "method_not_allowed_with_middleware",
+			new: func() (*Router, *http.Request) {
+				r := New()
+				r.Use(allocationMiddleware)
+				r.Get("/known", writeStatus(http.StatusNoContent))
+				return r, httptest.NewRequest(http.MethodPost, "/known", nil)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, req := tt.new()
+			w := &allocationResponseWriter{header: make(http.Header)}
+
+			allocs := testing.AllocsPerRun(1000, func() {
+				w.status = 0
+				r.ServeHTTP(w, req)
+			})
+
+			if allocs != 0 {
+				t.Fatalf("%s allocated %v times, want 0", tt.name, allocs)
+			}
+		})
 	}
 }
 

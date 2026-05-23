@@ -83,7 +83,7 @@ func (r *Router) tryHandle(method, pattern string, h http.Handler, anyMethod boo
 	}
 
 	if h == nil {
-		h = http.NotFoundHandler()
+		h = defaultNotFoundHandler{}
 	}
 
 	compiled := compose(h, r.middleware)

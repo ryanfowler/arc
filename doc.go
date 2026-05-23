@@ -394,8 +394,9 @@
 //
 // # Fallback Handlers
 //
-// By default, unmatched requests use http.NotFoundHandler, and paths registered
-// for a different method receive 405 Method Not Allowed.
+// By default, unmatched requests receive the same response as
+// http.NotFoundHandler, and paths registered for a different method receive 405
+// Method Not Allowed.
 //
 // Customize fallback handlers during startup:
 //

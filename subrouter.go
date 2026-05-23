@@ -118,7 +118,7 @@ func (r *Router) Mount(pattern string, h http.Handler) {
 // same requests. A nil handler is treated as [http.NotFoundHandler].
 func (r *Router) TryMount(pattern string, h http.Handler) error {
 	if h == nil {
-		h = http.NotFoundHandler()
+		h = defaultNotFoundHandler{}
 	}
 
 	pattern = cleanMountPattern(pattern)
