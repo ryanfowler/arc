@@ -92,6 +92,22 @@ type Router struct {
 	patternPrefix string
 }
 
+const (
+	headerAllow               = "Allow"
+	headerContentLength       = "Content-Length"
+	headerContentType         = "Content-Type"
+	headerXContentTypeOptions = "X-Content-Type-Options"
+
+	defaultNotFoundContentType         = "text/plain; charset=utf-8"
+	defaultNotFoundXContentTypeOptions = "nosniff"
+)
+
+var (
+	defaultNotFoundContentTypeHeader         = []string{defaultNotFoundContentType}
+	defaultNotFoundXContentTypeOptionsHeader = []string{defaultNotFoundXContentTypeOptions}
+	defaultNotFoundBody                      = []byte("404 page not found\n")
+)
+
 type pathEntry struct {
 	methods *routeMethods
 	child   *childRouter
@@ -111,19 +127,21 @@ type routeRegistration struct {
 }
 
 type routeMethods struct {
-	methods           []string
-	routes            map[string]*route
-	get               *route
-	post              *route
-	put               *route
-	patch             *route
-	delete            *route
-	head              *route
-	options           *route
-	anyRoute          *route
-	allow             string
-	allowImplicitHead string
-	pattern           string
+	methods                 []string
+	routes                  map[string]*route
+	get                     *route
+	post                    *route
+	put                     *route
+	patch                   *route
+	delete                  *route
+	head                    *route
+	options                 *route
+	anyRoute                *route
+	allow                   string
+	allowValues             []string
+	allowImplicitHead       string
+	allowImplicitHeadValues []string
+	pattern                 string
 }
 
 type childRouter struct {
@@ -139,7 +157,7 @@ type childRouter struct {
 //
 // By default:
 //
-//   - unmatched requests use [http.NotFoundHandler];
+//   - unmatched requests receive the same response as [http.NotFoundHandler];
 //   - paths registered for a different method receive 405 Method Not Allowed;
 //   - GET routes handle HEAD requests unless an explicit HEAD or any-method
 //     route matches.
@@ -149,8 +167,8 @@ type childRouter struct {
 func New() *Router {
 	r := &Router{
 		pathEntries:      make(map[string]*pathEntry),
-		notFound:         http.NotFoundHandler(),
-		methodNotAllowed: http.HandlerFunc(defaultMethodNotAllowed),
+		notFound:         defaultNotFoundHandler{},
+		methodNotAllowed: defaultMethodNotAllowedHandler{},
 		strictSlash:      true,
 		implicitHead:     true,
 	}
@@ -212,7 +230,23 @@ func (r *Router) SetStrictSlash(strict bool) {
 	r.strictSlash = strict
 }
 
-func defaultMethodNotAllowed(w http.ResponseWriter, _ *http.Request) {
+type defaultNotFoundHandler struct{}
+
+func (defaultNotFoundHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	// Mirror http.NotFound without Header.Set or string-to-byte allocations.
+	// The shared header value slices have len == cap == 1, so Header.Add
+	// allocates a replacement slice instead of appending to shared storage.
+	h := w.Header()
+	delete(h, headerContentLength)
+	h[headerContentType] = defaultNotFoundContentTypeHeader
+	h[headerXContentTypeOptions] = defaultNotFoundXContentTypeOptionsHeader
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write(defaultNotFoundBody)
+}
+
+type defaultMethodNotAllowedHandler struct{}
+
+func (defaultMethodNotAllowedHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusMethodNotAllowed)
 }
 
@@ -407,12 +441,22 @@ func remainingChildPath(path string, index int) string {
 func (r *Router) serveRouteMethods(w http.ResponseWriter, req *http.Request, methods *routeMethods, params match.Params) {
 	route := methods.routeFor(req.Method, r.implicitHead)
 	if route == nil {
-		w.Header().Set("Allow", methods.allowHeader(r.implicitHead))
+		r.setAllowHeader(w, methods)
 		r.methodNotAllowedHandler.ServeHTTP(w, requestForHandler(req, params, methods.pattern))
 		return
 	}
 
 	route.handler.ServeHTTP(w, requestForHandler(req, params, route.pattern))
+}
+
+func (r *Router) setAllowHeader(w http.ResponseWriter, methods *routeMethods) {
+	if _, ok := r.methodNotAllowed.(defaultMethodNotAllowedHandler); ok {
+		// Header.Set allocates a one-element slice; the cached header value has
+		// len == cap == 1, so Header.Add allocates a replacement slice.
+		w.Header()[headerAllow] = methods.allowHeaderValues(r.implicitHead)
+		return
+	}
+	w.Header().Set(headerAllow, methods.allowHeader(r.implicitHead))
 }
 
 func (r *Router) relaxedSlashPath(path string) (string, bool) {
@@ -723,7 +767,9 @@ func (m *routeMethods) add(method string) {
 
 func (m *routeMethods) updateAllowHeaders() {
 	m.allow = strings.Join(m.methods, ", ")
+	m.allowValues = []string{m.allow}
 	m.allowImplicitHead = m.allow
+	m.allowImplicitHeadValues = m.allowValues
 
 	if !m.has(http.MethodGet) || m.has(http.MethodHead) {
 		return
@@ -735,6 +781,7 @@ func (m *routeMethods) updateAllowHeaders() {
 	methods[i] = http.MethodHead
 	copy(methods[i+1:], m.methods[i:])
 	m.allowImplicitHead = strings.Join(methods, ", ")
+	m.allowImplicitHeadValues = []string{m.allowImplicitHead}
 }
 
 func (m *routeMethods) allowHeader(implicitHead bool) string {
@@ -742,6 +789,13 @@ func (m *routeMethods) allowHeader(implicitHead bool) string {
 		return m.allowImplicitHead
 	}
 	return m.allow
+}
+
+func (m *routeMethods) allowHeaderValues(implicitHead bool) []string {
+	if implicitHead {
+		return m.allowImplicitHeadValues
+	}
+	return m.allowValues
 }
 
 func (m *routeMethods) has(method string) bool {
