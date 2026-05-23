@@ -1,5 +1,5 @@
-github.com/ryanfowler/match v0.3.0 h1:jfBByjdfqtbL47ps0zvwBT9oJpv1Dl2ZNg+szoWObmo=
-github.com/ryanfowler/match v0.3.0/go.mod h1:h7xazxXGO4UXo4eVeK6GTvovJ5u8aQtItk3mTVs/9PM=
+github.com/ryanfowler/match v0.3.1 h1:+m6L1r0FdvIpGFnxfPbFHMNWaIs9wy1MvDcxmmcDVm4=
+github.com/ryanfowler/match v0.3.1/go.mod h1:h7xazxXGO4UXo4eVeK6GTvovJ5u8aQtItk3mTVs/9PM=
 golang.org/x/net v0.55.0 h1:bcvxaJn3e1U6InsFWt1JUq1aSjnRxLzT2rtD2KfkDF8=
 golang.org/x/net v0.55.0/go.mod h1:L5U2KuzuOe1lY7Z+aWVIKK6qEeJXnXV9yzGA+WCHJww=
 golang.org/x/text v0.37.0 h1:Cqjiwd9eSg8e0QAkyCaQTNHFIIzWtidPahFWR83rTrc=
