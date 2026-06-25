@@ -73,7 +73,6 @@ type Middleware func(http.Handler) http.Handler
 type Router struct {
 	pathRoutes             match.Router[*pathEntry]
 	pathEntries            map[string]*pathEntry
-	pathPatterns           []string
 	hostRoutes             hostMatcher[*childRouter]
 	hasDynamicPathPatterns bool
 	hasHosts               bool
@@ -505,7 +504,6 @@ func insertRouteRegistration(r *Router, reg routeRegistration) error {
 			return err
 		}
 		r.pathEntries[reg.pattern] = entry
-		r.pathPatterns = append(r.pathPatterns, reg.pattern)
 		if isDynamicMatchPattern(reg.pattern) {
 			r.hasDynamicPathPatterns = true
 		}
@@ -600,7 +598,6 @@ func (r *Router) insertStaticChildPathEntries(regs []childPathRegistration) erro
 				return err
 			}
 			r.pathEntries[entry.pattern] = entry.entry
-			r.pathPatterns = append(r.pathPatterns, entry.pattern)
 			continue
 		}
 		entry.entry.child = entry.child
@@ -661,7 +658,6 @@ func (r *Router) insertTransactionalChildPathEntries(regs []childPathRegistratio
 	for _, entry := range pending {
 		if entry.new {
 			r.pathEntries[entry.pattern] = entry.entry
-			r.pathPatterns = append(r.pathPatterns, entry.pattern)
 			if isDynamicMatchPattern(entry.pattern) {
 				r.hasDynamicPathPatterns = true
 			}
