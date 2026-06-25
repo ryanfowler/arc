@@ -1853,6 +1853,23 @@ func TestTrySubRouterReturnsMatchErrors(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestFailedTrySubRouterDoesNotConfigureChild(t *testing.T) {
+	r := New()
+	configured := 0
+	r.Use(func(next http.Handler) http.Handler {
+		configured++
+		return next
+	})
+	configured = 0
+
+	if child, err := r.TrySubRouter("/users/{}"); !errors.Is(err, match.ErrInvalidParam) {
+		t.Fatalf("TrySubRouter invalid param child, error = %v, %v; want ErrInvalidParam", child, err)
+	}
+	if configured != 0 {
+		t.Fatalf("middleware configured %d times after failed TrySubRouter, want 0", configured)
+	}
+}
+
 func TestTrySubRouterConflictDoesNotAttachExistingRouteEntry(t *testing.T) {
 	r := New()
 	r.HandleAll("/api/{name}.json", writeStatus(http.StatusAccepted))
@@ -2501,6 +2518,23 @@ func TestTryHostReturnsMatchErrors(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil))
 	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestFailedTryHostDoesNotConfigureChild(t *testing.T) {
+	r := New()
+	configured := 0
+	r.Use(func(next http.Handler) http.Handler {
+		configured++
+		return next
+	})
+	configured = 0
+
+	if child, err := r.TryHost("{}.example.com"); !errors.Is(err, ErrInvalidHostPattern) {
+		t.Fatalf("TryHost invalid param child, error = %v, %v; want ErrInvalidHostPattern", child, err)
+	}
+	if configured != 0 {
+		t.Fatalf("middleware configured %d times after failed TryHost, want 0", configured)
+	}
 }
 
 func TestTryHostRejectsInvalidHostPatterns(t *testing.T) {

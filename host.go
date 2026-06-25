@@ -62,8 +62,13 @@ func (r *Router) Host(pattern string) *Router {
 // duplicate parameter names within the pattern, duplicate host patterns, and
 // ambiguous host patterns that could match the same requests.
 func (r *Router) TryHost(pattern string) (*Router, error) {
+	host, err := normalizeHostPattern(pattern)
+	if err != nil {
+		return nil, err
+	}
+
 	child := newChildRouter(r)
-	if err := r.hostRoutes.TryInsert(pattern, child); err != nil {
+	if err := r.hostRoutes.tryInsertNormalized(host, child); err != nil {
 		return nil, err
 	}
 	r.hasHosts = true

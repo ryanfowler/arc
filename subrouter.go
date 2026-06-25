@@ -59,7 +59,6 @@ func (r *Router) SubRouter(pattern string) *Router {
 // pattern, duplicate mounts, and ambiguous mount patterns that could match the
 // same requests.
 func (r *Router) TrySubRouter(pattern string) (*Router, error) {
-	child := newChildRouter(r)
 	pattern = cleanMountPattern(pattern)
 	if err := validateHTTPPathPattern(pattern); err != nil {
 		return nil, err
@@ -69,6 +68,8 @@ func (r *Router) TrySubRouter(pattern string) (*Router, error) {
 	if err := validateUniqueParamNames(matchPattern); err != nil {
 		return nil, err
 	}
+
+	child := newChildRouter(r)
 	if err := r.insertChildPathEntries(childPathRegistrations(matchPattern, child)); err != nil {
 		return nil, err
 	}
