@@ -30,6 +30,10 @@ func (m *hostMatcher[T]) TryInsert(pattern string, value T) error {
 		return err
 	}
 
+	return m.tryInsertNormalized(host, value)
+}
+
+func (m *hostMatcher[T]) tryInsertNormalized(host string, value T) error {
 	if err := m.dnsRoutes.TryInsert(host, value); err != nil {
 		return hostInsertError(err)
 	}
