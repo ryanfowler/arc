@@ -157,20 +157,24 @@ func cleanMountPattern(pattern string) string {
 	return pattern
 }
 
-func childPathRegistrations(pattern string, child *childRouter) []childPathRegistration {
-	regs := []childPathRegistration{{
-		pattern: pattern,
-		child:   child,
-	}}
+func childPathRegistrations(pattern string, child *childRouter) childPathRegistrationSet {
+	regs := childPathRegistrationSet{
+		entries: [2]childPathRegistration{{
+			pattern: pattern,
+			child:   child,
+		}},
+		count: 1,
+	}
 	if patternHasFinalCatchAll(pattern) {
 		return regs
 	}
 
 	if pattern != "/" {
-		regs = append(regs, childPathRegistration{
+		regs.entries[1] = childPathRegistration{
 			pattern: pattern + "/",
 			child:   child,
-		})
+		}
+		regs.count = 2
 	}
 
 	return regs

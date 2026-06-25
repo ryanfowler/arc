@@ -526,6 +526,11 @@ type childPathRegistration struct {
 	child   *childRouter
 }
 
+type childPathRegistrationSet struct {
+	entries [2]childPathRegistration
+	count   int
+}
+
 type pendingChildPathEntry struct {
 	pattern string
 	child   *childRouter
@@ -533,7 +538,7 @@ type pendingChildPathEntry struct {
 	new     bool
 }
 
-func (r *Router) insertChildPathEntries(regs []childPathRegistration) error {
+func (r *Router) insertChildPathEntries(regs childPathRegistrationSet) error {
 	if r.canInsertStaticChildPathEntries(regs) {
 		return r.insertStaticChildPathEntries(regs)
 	}
@@ -541,11 +546,12 @@ func (r *Router) insertChildPathEntries(regs []childPathRegistration) error {
 	return r.insertTransactionalChildPathEntries(regs)
 }
 
-func (r *Router) canInsertStaticChildPathEntries(regs []childPathRegistration) bool {
+func (r *Router) canInsertStaticChildPathEntries(regs childPathRegistrationSet) bool {
 	if r.hasDynamicPathPatterns {
 		return false
 	}
-	for _, reg := range regs {
+	for i := 0; i < regs.count; i++ {
+		reg := regs.entries[i]
 		if isDynamicMatchPattern(reg.pattern) {
 			return false
 		}
@@ -557,42 +563,45 @@ func (r *Router) canInsertStaticChildPathEntries(regs []childPathRegistration) b
 // only conflict by exact duplicate, so the static path can validate with
 // pathEntries and commit directly. Dynamic patterns use the cloned matcher
 // transaction below.
-func (r *Router) insertStaticChildPathEntries(regs []childPathRegistration) error {
-	seen := make(map[string]struct{}, len(regs))
-	pending := make([]pendingChildPathEntry, 0, len(regs))
+func (r *Router) insertStaticChildPathEntries(regs childPathRegistrationSet) error {
+	var pending [2]pendingChildPathEntry
+	pendingCount := 0
 
-	for _, reg := range regs {
-		if _, ok := seen[reg.pattern]; ok {
+	for i := 0; i < regs.count; i++ {
+		reg := regs.entries[i]
+		if i == 1 && reg.pattern == regs.entries[0].pattern {
 			return &match.ConflictError{Route: reg.pattern, With: reg.pattern}
 		}
-		seen[reg.pattern] = struct{}{}
 
 		entry := r.pathEntries[reg.pattern]
 		if entry != nil {
 			if entry.child != nil {
 				return &match.ConflictError{Route: reg.pattern, With: reg.pattern}
 			}
-			pending = append(pending, pendingChildPathEntry{
+			pending[pendingCount] = pendingChildPathEntry{
 				pattern: reg.pattern,
 				child:   reg.child,
 				entry:   entry,
-			})
+			}
+			pendingCount++
 			continue
 		}
 
-		pending = append(pending, pendingChildPathEntry{
+		pending[pendingCount] = pendingChildPathEntry{
 			pattern: reg.pattern,
 			entry: &pathEntry{
 				child: reg.child,
 			},
 			new: true,
-		})
+		}
+		pendingCount++
 	}
 
 	if r.pathEntries == nil {
-		r.pathEntries = make(map[string]*pathEntry, len(pending))
+		r.pathEntries = make(map[string]*pathEntry, pendingCount)
 	}
-	for _, entry := range pending {
+	for i := 0; i < pendingCount; i++ {
+		entry := pending[i]
 		if entry.new {
 			if err := r.pathRoutes.TryInsert(entry.pattern, entry.entry); err != nil {
 				return err
@@ -606,28 +615,29 @@ func (r *Router) insertStaticChildPathEntries(regs []childPathRegistration) erro
 	return nil
 }
 
-func (r *Router) insertTransactionalChildPathEntries(regs []childPathRegistration) error {
-	seen := make(map[string]struct{}, len(regs))
-	pending := make([]pendingChildPathEntry, 0, len(regs))
+func (r *Router) insertTransactionalChildPathEntries(regs childPathRegistrationSet) error {
+	var pending [2]pendingChildPathEntry
+	pendingCount := 0
 	var nextRoutes match.Router[*pathEntry]
 	routesCloned := false
 
-	for _, reg := range regs {
-		if _, ok := seen[reg.pattern]; ok {
+	for i := 0; i < regs.count; i++ {
+		reg := regs.entries[i]
+		if i == 1 && reg.pattern == regs.entries[0].pattern {
 			return &match.ConflictError{Route: reg.pattern, With: reg.pattern}
 		}
-		seen[reg.pattern] = struct{}{}
 
 		entry := r.pathEntries[reg.pattern]
 		if entry != nil {
 			if entry.child != nil {
 				return &match.ConflictError{Route: reg.pattern, With: reg.pattern}
 			}
-			pending = append(pending, pendingChildPathEntry{
+			pending[pendingCount] = pendingChildPathEntry{
 				pattern: reg.pattern,
 				child:   reg.child,
 				entry:   entry,
-			})
+			}
+			pendingCount++
 			continue
 		}
 
@@ -641,21 +651,23 @@ func (r *Router) insertTransactionalChildPathEntries(regs []childPathRegistratio
 		if err := nextRoutes.TryInsert(reg.pattern, entry); err != nil {
 			return err
 		}
-		pending = append(pending, pendingChildPathEntry{
+		pending[pendingCount] = pendingChildPathEntry{
 			pattern: reg.pattern,
 			entry:   entry,
 			new:     true,
-		})
+		}
+		pendingCount++
 	}
 
 	if routesCloned {
 		r.pathRoutes = nextRoutes
 	}
 	if r.pathEntries == nil {
-		r.pathEntries = make(map[string]*pathEntry, len(pending))
+		r.pathEntries = make(map[string]*pathEntry, pendingCount)
 	}
 
-	for _, entry := range pending {
+	for i := 0; i < pendingCount; i++ {
+		entry := pending[i]
 		if entry.new {
 			r.pathEntries[entry.pattern] = entry.entry
 			if isDynamicMatchPattern(entry.pattern) {
