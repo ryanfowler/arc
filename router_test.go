@@ -2576,6 +2576,18 @@ func TestHostRouterNormalizesIPv6HostWithPort(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestHostRouterNormalizesColonFormPatternCase(t *testing.T) {
+	r := New()
+	local := r.Host("FE80::1")
+	local.Get("/", writeStatus(http.StatusAccepted))
+
+	req := httptest.NewRequest(http.MethodGet, "http://[fe80::1]/", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
 func TestHostRouterNormalizesBracketedIPv6HostWithoutPort(t *testing.T) {
 	r := New()
 	local := r.Host("::1")
@@ -2604,6 +2616,16 @@ func TestHostRouterParamCapturesIPv6Literal(t *testing.T) {
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://[::1]/", nil))
 
 	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func TestNormalizeHostPatternLowercasesColonForm(t *testing.T) {
+	got, err := normalizeHostPattern("FE80::1")
+	if err != nil {
+		t.Fatalf("normalizeHostPattern(%q) error = %v", "FE80::1", err)
+	}
+	if got != "fe80::1" {
+		t.Fatalf("normalizeHostPattern(%q) = %q, want %q", "FE80::1", got, "fe80::1")
+	}
 }
 
 func TestNormalizeRequestHost(t *testing.T) {

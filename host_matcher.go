@@ -72,7 +72,7 @@ func normalizeHostPattern(pattern string) (string, error) {
 		if hasExactlyOneColon(host) {
 			return "", ErrInvalidHostPattern
 		}
-		return host, nil
+		return strings.ToLower(host), nil
 	}
 
 	var labels []hostLabelPattern
