@@ -374,7 +374,7 @@
 // while "api-{*subdomain}.example.com" captures leading labels after the
 // "api-" prefix. Literal host text is matched case-insensitively, while
 // parameter names keep their original case. Captured host parameter values come
-// from the normalized host, so ASCII letters are lowercase and IDNs are
+// from the normalized host, so ASCII letter case is preserved and IDNs are
 // punycode.
 //
 // Trailing dots are ignored, IDNs are normalized to punycode, and a numeric

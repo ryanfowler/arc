@@ -299,10 +299,10 @@ func normalizeRequestHost(host string) string {
 		if hasExactlyOneColon(host) {
 			return ""
 		}
-		return strings.ToLower(trimTrailingHostDot(host))
+		return trimTrailingHostDot(host)
 	}
 
-	normalized, ok := normalizeDNSHost(host)
+	normalized, ok := normalizeRequestDNSHost(host)
 	if !ok {
 		return ""
 	}
@@ -368,17 +368,52 @@ func normalizeDNSHost(host string) (string, bool) {
 	return "", false
 }
 
-func normalizeASCIIHost(host string, checkACE bool) (string, bool) {
-	if len(host) > maxDNSHostLength {
+func normalizeRequestDNSHost(host string) (string, bool) {
+	host = trimTrailingHostDot(host)
+	if host == "" {
 		return "", false
 	}
+	if ok := validASCIIHost(host, true); ok {
+		return host, true
+	}
 
-	needsLower := false
+	ascii, err := idna.Lookup.ToASCII(host)
+	if err != nil {
+		return "", false
+	}
+	ascii = strings.ToLower(trimTrailingHostDot(ascii))
+	if normalized, ok := normalizeASCIIHost(ascii, false); ok {
+		return normalized, true
+	}
+	return "", false
+}
+
+func normalizeASCIIHost(host string, checkACE bool) (string, bool) {
+	needsLower, ok := checkASCIIHost(host, checkACE)
+	if !ok {
+		return "", false
+	}
+	if needsLower {
+		return strings.ToLower(host), true
+	}
+	return host, true
+}
+
+func validASCIIHost(host string, checkACE bool) bool {
+	_, ok := checkASCIIHost(host, checkACE)
+	return ok
+}
+
+func checkASCIIHost(host string, checkACE bool) (needsLower bool, ok bool) {
+	if len(host) > maxDNSHostLength {
+		return false, false
+	}
+
 	labelStart := 0
 	for i := 0; i <= len(host); i++ {
 		if i == len(host) || host[i] == '.' {
 			if !validASCIIHostLabel(host[labelStart:i], checkACE) {
-				return "", false
+				return false, false
 			}
 			labelStart = i + 1
 			continue
@@ -392,14 +427,10 @@ func normalizeASCIIHost(host string, checkACE bool) (string, bool) {
 		case c >= '0' && c <= '9':
 		case c == '-':
 		default:
-			return "", false
+			return false, false
 		}
 	}
-
-	if needsLower {
-		return strings.ToLower(host), true
-	}
-	return host, true
+	return needsLower, true
 }
 
 func validASCIIHostLabel(label string, checkACE bool) bool {

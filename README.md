@@ -478,7 +478,7 @@ captures one label with a required literal prefix, while
 `api-{*subdomain}.example.com` captures leading labels after the `api-` prefix.
 Literal host text is matched case-insensitively, while parameter names keep
 their original case. Captured host parameter values come from the normalized
-host, so ASCII letters are lowercase and IDNs are punycode.
+host, so ASCII letter case is preserved and IDNs are punycode.
 
 Trailing dots are ignored, IDNs are normalized to punycode, and a numeric port
 in `Request.Host` is ignored before matching. Brackets around colon-form hosts

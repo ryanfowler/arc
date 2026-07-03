@@ -2301,8 +2301,8 @@ func TestHostRouterMatchesAndMergesParams(t *testing.T) {
 	r := New()
 	tenant := r.Host("{tenant}.example.com")
 	tenant.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if got := req.PathValue("tenant"); got != "acme" {
-			t.Fatalf("PathValue(tenant) = %q, want %q", got, "acme")
+		if got := req.PathValue("tenant"); got != "ACME" {
+			t.Fatalf("PathValue(tenant) = %q, want %q", got, "ACME")
 		}
 		if got := req.PathValue("id"); got != "42" {
 			t.Fatalf("PathValue(id) = %q, want %q", got, "42")
@@ -2505,8 +2505,8 @@ func TestHostRouterPreservesParamNameCase(t *testing.T) {
 	r := New()
 	tenant := r.Host("{Tenant}.Example.COM")
 	tenant.Get("/", func(w http.ResponseWriter, req *http.Request) {
-		if got := req.PathValue("Tenant"); got != "acme" {
-			t.Fatalf("PathValue(Tenant) = %q, want %q", got, "acme")
+		if got := req.PathValue("Tenant"); got != "ACME" {
+			t.Fatalf("PathValue(Tenant) = %q, want %q", got, "ACME")
 		}
 		if got := req.PathValue("tenant"); got != "" {
 			t.Fatalf("PathValue(tenant) = %q, want empty", got)
@@ -2783,7 +2783,7 @@ func TestNormalizeRequestHost(t *testing.T) {
 		{
 			name: "uppercase_ascii",
 			host: "API.example.com",
-			want: "api.example.com",
+			want: "API.example.com",
 		},
 		{
 			name: "trailing_dot",
@@ -2836,18 +2836,18 @@ func TestNormalizeRequestHost(t *testing.T) {
 	}
 }
 
-func TestNormalizeRequestHostLowercaseASCIIFastPathAllocatesZero(t *testing.T) {
-	host := "api.example.com"
+func TestNormalizeRequestHostASCIIFastPathAllocatesZero(t *testing.T) {
+	for _, host := range []string{"api.example.com", "API.example.com"} {
+		allocs := testing.AllocsPerRun(1000, func() {
+			normalizeHostSink = normalizeRequestHost(host)
+		})
 
-	allocs := testing.AllocsPerRun(1000, func() {
-		normalizeHostSink = normalizeRequestHost(host)
-	})
-
-	if normalizeHostSink != host {
-		t.Fatalf("normalizeRequestHost(%q) = %q, want %q", host, normalizeHostSink, host)
-	}
-	if allocs != 0 {
-		t.Fatalf("normalizeRequestHost(%q) allocated %v times, want 0", host, allocs)
+		if normalizeHostSink != host {
+			t.Fatalf("normalizeRequestHost(%q) = %q, want %q", host, normalizeHostSink, host)
+		}
+		if allocs != 0 {
+			t.Fatalf("normalizeRequestHost(%q) allocated %v times, want 0", host, allocs)
+		}
 	}
 }
 
