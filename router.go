@@ -864,11 +864,11 @@ func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path strin
 			mountPath = decodedMatchPath(mountPath)
 		}
 		if len(c.middleware) == 0 {
-			c.handler.ServeHTTP(w, requestWithURLPath(req, mountPath, rawMountPath))
+			serveWithURLPath(w, req, c.handler, mountPath, rawMountPath)
 			return
 		}
 		final := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			c.handler.ServeHTTP(w, requestWithURLPath(req, mountPath, rawMountPath))
+			serveWithURLPath(w, req, c.handler, mountPath, rawMountPath)
 		})
 		serveWithMiddleware(w, req, final, c.middleware)
 		return
@@ -885,18 +885,21 @@ func requestForHandler(req *http.Request, params match.Params, pattern string) *
 	return req
 }
 
-func requestWithURLPath(req *http.Request, path, rawPath string) *http.Request {
+func serveWithURLPath(w http.ResponseWriter, req *http.Request, h http.Handler, path, rawPath string) {
 	if req.URL.Path == path && (rawPath == "" || req.URL.RawPath == rawPath) {
-		return req
+		h.ServeHTTP(w, req)
+		return
 	}
 
-	next := new(http.Request)
-	*next = *req
-	url := *req.URL
-	url.Path = path
-	url.RawPath = rawPath
-	next.URL = &url
-	return next
+	oldPath := req.URL.Path
+	oldRawPath := req.URL.RawPath
+	req.URL.Path = path
+	req.URL.RawPath = rawPath
+	defer func() {
+		req.URL.Path = oldPath
+		req.URL.RawPath = oldRawPath
+	}()
+	h.ServeHTTP(w, req)
 }
 
 func escapedSlashMatchPath(req *http.Request) (string, bool) {

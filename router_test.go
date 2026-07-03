@@ -2101,6 +2101,47 @@ func TestMountDoesNotMatchPartialSegment(t *testing.T) {
 	assertStatus(t, rec, http.StatusNotFound)
 }
 
+func TestMountRestoresOriginalURLPathAfterHandler(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		useMiddleware bool
+	}{
+		{name: "without middleware"},
+		{name: "with middleware", useMiddleware: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := New()
+			var middlewareAfterPath string
+			if tt.useMiddleware {
+				r.Use(func(next http.Handler) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+						next.ServeHTTP(w, req)
+						middlewareAfterPath = req.URL.Path
+					})
+				})
+			}
+			r.Mount("/assets", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if got := req.URL.Path; got != "/app.css" {
+					t.Fatalf("handler req.URL.Path = %q, want %q", got, "/app.css")
+				}
+				w.WriteHeader(http.StatusAccepted)
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, "/assets/app.css", nil)
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+
+			assertStatus(t, rec, http.StatusAccepted)
+			if got := req.URL.Path; got != "/assets/app.css" {
+				t.Fatalf("post-ServeHTTP req.URL.Path = %q, want original path", got)
+			}
+			if tt.useMiddleware && middlewareAfterPath != "/assets/app.css" {
+				t.Fatalf("middleware after path = %q, want original path", middlewareAfterPath)
+			}
+		})
+	}
+}
+
 func TestMountRunsParentMiddlewareBeforeRewritingPath(t *testing.T) {
 	var paths []string
 	r := New()
