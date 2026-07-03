@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -1064,8 +1065,19 @@ func TestTryHandleDuplicateDoesNotCorruptRouteTables(t *testing.T) {
 
 func TestHandlePanicsForInvalidPattern(t *testing.T) {
 	defer func() {
-		if recover() == nil {
+		p := recover()
+		if p == nil {
 			t.Fatal("Handle did not panic")
+		}
+		err, ok := p.(error)
+		if !ok {
+			t.Fatalf("Handle panic = %T %[1]v, want error", p)
+		}
+		if !strings.HasPrefix(err.Error(), `arc: register GET "/users/{}": `) {
+			t.Fatalf("Handle panic error = %q, want arc registration prefix", err.Error())
+		}
+		if !errors.Is(err, match.ErrInvalidParam) {
+			t.Fatalf("Handle panic error = %v, want to wrap ErrInvalidParam", err)
 		}
 	}()
 
@@ -1820,8 +1832,20 @@ func TestSubRouterRejectsAmbiguousMounts(t *testing.T) {
 	r.SubRouter("/api/{name}.json")
 
 	defer func() {
-		if recover() == nil {
+		p := recover()
+		if p == nil {
 			t.Fatal("SubRouter did not panic")
+		}
+		err, ok := p.(error)
+		if !ok {
+			t.Fatalf("SubRouter panic = %T %[1]v, want error", p)
+		}
+		if !strings.HasPrefix(err.Error(), `arc: subrouter "/api/v{version}.json": `) {
+			t.Fatalf("SubRouter panic error = %q, want arc subrouter prefix", err.Error())
+		}
+		var conflict *match.ConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("SubRouter panic error = %v, want to wrap *match.ConflictError", err)
 		}
 	}()
 
@@ -2185,6 +2209,27 @@ func TestMountNilHandlerUsesNotFoundHandler(t *testing.T) {
 	assertStatus(t, rec, http.StatusNotFound)
 }
 
+func TestMountPanicsForInvalidPattern(t *testing.T) {
+	defer func() {
+		p := recover()
+		if p == nil {
+			t.Fatal("Mount did not panic")
+		}
+		err, ok := p.(error)
+		if !ok {
+			t.Fatalf("Mount panic = %T %[1]v, want error", p)
+		}
+		if !strings.HasPrefix(err.Error(), `arc: mount "/users/{}": `) {
+			t.Fatalf("Mount panic error = %q, want arc mount prefix", err.Error())
+		}
+		if !errors.Is(err, match.ErrInvalidParam) {
+			t.Fatalf("Mount panic error = %v, want to wrap ErrInvalidParam", err)
+		}
+	}()
+
+	New().Mount("/users/{}", writeStatus(http.StatusNoContent))
+}
+
 func TestTryMountReturnsMatchErrors(t *testing.T) {
 	r := New()
 	if err := r.TryMount("/users/{}", writeStatus(http.StatusNoContent)); !errors.Is(err, match.ErrInvalidParam) {
@@ -2522,6 +2567,27 @@ func TestHostRouterPrefersStaticHostOverCatchAll(t *testing.T) {
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://www.example.com/", nil))
 
 	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestHostPanicsForInvalidPattern(t *testing.T) {
+	defer func() {
+		p := recover()
+		if p == nil {
+			t.Fatal("Host did not panic")
+		}
+		err, ok := p.(error)
+		if !ok {
+			t.Fatalf("Host panic = %T %[1]v, want error", p)
+		}
+		if !strings.HasPrefix(err.Error(), `arc: host "{}.example.com": `) {
+			t.Fatalf("Host panic error = %q, want arc host prefix", err.Error())
+		}
+		if !errors.Is(err, ErrInvalidHostPattern) {
+			t.Fatalf("Host panic error = %v, want to wrap ErrInvalidHostPattern", err)
+		}
+	}()
+
+	New().Host("{}.example.com")
 }
 
 func TestTryHostReturnsMatchErrors(t *testing.T) {

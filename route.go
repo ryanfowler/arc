@@ -1,6 +1,7 @@
 package arc
 
 import (
+	"fmt"
 	"net/http"
 )
 
@@ -19,7 +20,7 @@ import (
 // registration error instead.
 func (r *Router) Handle(method, pattern string, h http.Handler) {
 	if err := r.TryHandle(method, pattern, h); err != nil {
-		panic(err)
+		panic(fmt.Errorf("arc: register %s %q: %w", method, pattern, err))
 	}
 }
 
@@ -55,7 +56,7 @@ func (r *Router) TryHandle(method, pattern string, h http.Handler) error {
 // receive the registration error instead.
 func (r *Router) HandleAll(pattern string, h http.Handler) {
 	if err := r.TryHandleAll(pattern, h); err != nil {
-		panic(err)
+		panic(fmt.Errorf("arc: register * %q: %w", pattern, err))
 	}
 }
 

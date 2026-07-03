@@ -1,5 +1,7 @@
 package arc
 
+import "fmt"
+
 // Host registers and returns a child router for requests whose host matches
 // pattern.
 //
@@ -50,7 +52,7 @@ package arc
 func (r *Router) Host(pattern string) *Router {
 	child, err := r.TryHost(pattern)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("arc: host %q: %w", pattern, err))
 	}
 	return child
 }

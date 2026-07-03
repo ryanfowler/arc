@@ -1,6 +1,7 @@
 package arc
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -45,7 +46,7 @@ import (
 func (r *Router) SubRouter(pattern string) *Router {
 	child, err := r.TrySubRouter(pattern)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("arc: subrouter %q: %w", pattern, err))
 	}
 	return child
 }
@@ -106,7 +107,7 @@ func (r *Router) TrySubRouter(pattern string) (*Router, error) {
 // panic. Use [Router.TryMount] to receive the registration error instead.
 func (r *Router) Mount(pattern string, h http.Handler) {
 	if err := r.TryMount(pattern, h); err != nil {
-		panic(err)
+		panic(fmt.Errorf("arc: mount %q: %w", pattern, err))
 	}
 }
 
