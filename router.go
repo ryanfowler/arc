@@ -144,11 +144,12 @@ type routeMethods struct {
 }
 
 type childRouter struct {
-	router     *Router
-	handler    http.Handler
-	middleware []Middleware
-	mounted    bool
-	pattern    string
+	router               *Router
+	handler              http.Handler
+	middleware           []Middleware
+	mounted              bool
+	pattern              string
+	staticMountedHandler http.Handler
 }
 
 // New creates a [Router] with defaults suitable for a typical net/http
@@ -857,6 +858,10 @@ func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path strin
 
 	if c.mounted {
 		req.Pattern = c.pattern
+		if !decodeParams && c.staticMountedHandler != nil {
+			c.staticMountedHandler.ServeHTTP(w, req)
+			return
+		}
 		mountPath := path
 		rawMountPath := ""
 		if decodeParams {
@@ -883,6 +888,15 @@ func requestForHandler(req *http.Request, params match.Params, pattern string) *
 		setPathValues(req, params)
 	}
 	return req
+}
+
+type staticMountHandler struct {
+	prefix  string
+	handler http.Handler
+}
+
+func (h staticMountHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	serveWithURLPath(w, req, h.handler, childPrefixRest(req.URL.Path, h.prefix), "")
 }
 
 func serveWithURLPath(w http.ResponseWriter, req *http.Request, h http.Handler, path, rawPath string) {

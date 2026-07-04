@@ -127,12 +127,16 @@ func (r *Router) TryMount(pattern string, h http.Handler) error {
 	if err := validateHTTPPathPattern(pattern); err != nil {
 		return err
 	}
+	middleware := slices.Clone(r.middleware)
 	child := &childRouter{
 		router:     r,
 		handler:    h,
-		middleware: slices.Clone(r.middleware),
+		middleware: middleware,
 		mounted:    true,
 		pattern:    joinPatterns(r.patternPrefix, pattern),
+	}
+	if staticMountPrefix(child.pattern) && len(middleware) != 0 {
+		child.staticMountedHandler = compose(staticMountHandler{prefix: staticMountHandlerPrefix(child.pattern), handler: h}, middleware)
 	}
 	matchPattern := normalizePercentEncodedPattern(pattern)
 	if err := validateUniqueParamNames(matchPattern); err != nil {
@@ -144,6 +148,17 @@ func (r *Router) TryMount(pattern string, h http.Handler) error {
 
 	r.hasSubRouters = true
 	return nil
+}
+
+func staticMountPrefix(pattern string) bool {
+	return !strings.ContainsAny(pattern, "{}%")
+}
+
+func staticMountHandlerPrefix(pattern string) string {
+	if pattern == "/" {
+		return pattern
+	}
+	return strings.TrimRight(pattern, "/")
 }
 
 func cleanMountPattern(pattern string) string {
