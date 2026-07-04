@@ -204,11 +204,7 @@ func normalizeDynamicHostPatternLabel(label string, labelIndex int) (hostLabelPa
 	}
 
 	literalLength := len(prefixText) + len(suffixText)
-	if catchAll {
-		if literalLength >= maxDNSLabelLength {
-			return hostLabelPattern{}, ErrInvalidHostPattern
-		}
-	} else if literalLength >= maxDNSLabelLength {
+	if literalLength >= maxDNSLabelLength {
 		return hostLabelPattern{}, ErrInvalidHostPattern
 	}
 
