@@ -2050,6 +2050,83 @@ func TestMountPatternIncludesSubRouterPatterns(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestStaticMountWithMiddlewareUnderSubRouterStripsFullPrefix(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		parentUse bool
+	}{
+		{name: "inherited parent middleware", parentUse: true},
+		{name: "subrouter middleware"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := New()
+			if tt.parentUse {
+				r.Use(benchmarkMiddleware)
+			}
+			api := r.SubRouter("/api")
+			if !tt.parentUse {
+				api.Use(benchmarkMiddleware)
+			}
+			api.Mount("/assets", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if got := req.URL.Path; got != "/css/app.css" {
+					t.Fatalf("req.URL.Path = %q, want %q", got, "/css/app.css")
+				}
+				w.WriteHeader(http.StatusAccepted)
+			}))
+
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/assets/css/app.css", nil))
+
+			assertStatus(t, rec, http.StatusAccepted)
+		})
+	}
+}
+
+func TestStaticMountWithMiddlewareUnderParameterizedSubRouterUsesDynamicPath(t *testing.T) {
+	r := New()
+	r.Use(benchmarkMiddleware)
+	api := r.SubRouter("/api/{version}")
+	api.Mount("/assets", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if got := req.URL.Path; got != "/css/app.css" {
+			t.Fatalf("req.URL.Path = %q, want %q", got, "/css/app.css")
+		}
+		if got := req.PathValue("version"); got != "v1" {
+			t.Fatalf("PathValue(version) = %q, want %q", got, "v1")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/assets/css/app.css", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestStaticRootMountWithMiddlewareUnderSubRouterStripsFullPrefix(t *testing.T) {
+	for _, path := range []string{"/api", "/api/", "/api/css/app.css"} {
+		t.Run(path, func(t *testing.T) {
+			r := New()
+			api := r.SubRouter("/api")
+			api.Use(benchmarkMiddleware)
+			api.Mount("/", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				want := "/"
+				if path == "/api/css/app.css" {
+					want = "/css/app.css"
+				}
+				if got := req.URL.Path; got != want {
+					t.Fatalf("req.URL.Path = %q, want %q", got, want)
+				}
+				w.WriteHeader(http.StatusAccepted)
+			}))
+
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+
+			assertStatus(t, rec, http.StatusAccepted)
+		})
+	}
+}
+
 func TestMountArcRouterPreservesMountParamsWithInnerRouteParams(t *testing.T) {
 	r := New()
 	inner := New()

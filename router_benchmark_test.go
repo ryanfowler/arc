@@ -576,6 +576,20 @@ func BenchmarkRouterServeHTTPRealWorld(b *testing.B) {
 			},
 		},
 		{
+			name: "mounted_assets_with_middleware",
+			new: func() (*Router, *http.Request) {
+				r := New()
+				r.Use(benchmarkMiddleware)
+				r.Mount("/assets", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					benchmarkParam = req.URL.Path
+					w.WriteHeader(http.StatusNoContent)
+				}))
+				r.Get("/assets/healthz", writeBenchmarkStatus(http.StatusAccepted))
+
+				return r, httptest.NewRequest(http.MethodGet, "/assets/css/app.css", nil)
+			},
+		},
+		{
 			name: "api_not_found_below_subrouter",
 			new: func() (*Router, *http.Request) {
 				r := New()
