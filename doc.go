@@ -44,10 +44,14 @@
 //
 //	r.Handle(http.MethodGet, "/status", statusHandler)
 //
-// Use Router.HandleAll when the handler should receive every method and decide
+// Use Router.Any when a http.HandlerFunc should receive every method and decide
 // what is acceptable:
 //
-//	r.HandleAll("/healthz", http.HandlerFunc(health))
+//	r.Any("/healthz", health)
+//
+// Use Router.HandleAny when you already have an http.Handler:
+//
+//	r.HandleAny("/healthz", healthHandler)
 //
 // For the same path pattern, method-specific routes take precedence over an
 // any-method route. Path specificity is considered before method handling, so a
@@ -55,7 +59,7 @@
 // method.
 //
 //	r.Get("/users/{id}", getUser)
-//	r.HandleAll("/users/me", currentUser)
+//	r.Any("/users/me", currentUser)
 //
 //	// GET /users/me uses currentUser.
 //
@@ -428,6 +432,10 @@
 // or any runtime source.
 //
 //	if err := r.TryHandle(http.MethodGet, "/users/{id}", http.HandlerFunc(getUser)); err != nil {
+//		return err
+//	}
+//
+//	if err := r.TryHandleAny("/healthz", http.HandlerFunc(health)); err != nil {
 //		return err
 //	}
 //
