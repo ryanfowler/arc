@@ -489,6 +489,12 @@ func (r *Router) insertRoute(reg routeRegistration) error {
 	return insertRouteRegistration(r, reg)
 }
 
+func (r *Router) ensurePathEntries(capHint int) {
+	if r.pathEntries == nil {
+		r.pathEntries = make(map[string]*pathEntry, capHint)
+	}
+}
+
 func insertRouteRegistration(r *Router, reg routeRegistration) error {
 	if err := validateUniqueParamNames(reg.pattern); err != nil {
 		return err
@@ -496,9 +502,7 @@ func insertRouteRegistration(r *Router, reg routeRegistration) error {
 
 	entry := r.pathEntries[reg.pattern]
 	if entry == nil {
-		if r.pathEntries == nil {
-			r.pathEntries = make(map[string]*pathEntry)
-		}
+		r.ensurePathEntries(1)
 		entry = &pathEntry{}
 		if err := r.pathRoutes.TryInsert(reg.pattern, entry); err != nil {
 			return err
@@ -597,9 +601,7 @@ func (r *Router) insertStaticChildPathEntries(regs childPathRegistrationSet) err
 		pendingCount++
 	}
 
-	if r.pathEntries == nil {
-		r.pathEntries = make(map[string]*pathEntry, pendingCount)
-	}
+	r.ensurePathEntries(pendingCount)
 	for i := 0; i < pendingCount; i++ {
 		entry := pending[i]
 		if entry.new {
@@ -662,9 +664,7 @@ func (r *Router) insertTransactionalChildPathEntries(regs childPathRegistrationS
 	if routesCloned {
 		r.pathRoutes = nextRoutes
 	}
-	if r.pathEntries == nil {
-		r.pathEntries = make(map[string]*pathEntry, pendingCount)
-	}
+	r.ensurePathEntries(pendingCount)
 
 	for i := 0; i < pendingCount; i++ {
 		entry := pending[i]
