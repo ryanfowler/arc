@@ -423,6 +423,8 @@ func childPrefixRest(path, prefix string) string {
 }
 
 func remainingChildPath(path string, index int) string {
+	// Callers pass index as the first byte after a matched child prefix, so it is
+	// always at least 1.
 	if index < 0 || index > len(path) || index == len(path) {
 		return "/"
 	}
@@ -431,9 +433,6 @@ func remainingChildPath(path string, index int) string {
 			return "/" + path[index+1:]
 		}
 		return path[index:]
-	}
-	if index == 0 {
-		return path
 	}
 	return path[index-1:]
 }
