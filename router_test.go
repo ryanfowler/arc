@@ -272,13 +272,13 @@ func TestRouterPercentEncodedStaticPatternConflictsWithDecodedPattern(t *testing
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := New()
-			if err := r.TryHandleAll(tt.first, writeStatus(http.StatusAccepted)); err != nil {
-				t.Fatalf("TryHandleAll first route error = %v", err)
+			if err := r.TryHandleAny(tt.first, writeStatus(http.StatusAccepted)); err != nil {
+				t.Fatalf("TryHandleAny first route error = %v", err)
 			}
 
 			var conflict *match.ConflictError
-			if err := r.TryHandleAll(tt.second, writeStatus(http.StatusNoContent)); !errors.As(err, &conflict) {
-				t.Fatalf("TryHandleAll second route error = %v, want *match.ConflictError", err)
+			if err := r.TryHandleAny(tt.second, writeStatus(http.StatusNoContent)); !errors.As(err, &conflict) {
+				t.Fatalf("TryHandleAny second route error = %v, want *match.ConflictError", err)
 			}
 
 			rec := httptest.NewRecorder()
@@ -565,9 +565,9 @@ func TestRouterAllowsSamePatternForDifferentMethods(t *testing.T) {
 	}
 }
 
-func TestRouterHandleAllMatchesAnyMethod(t *testing.T) {
+func TestRouterHandleAnyMatchesAnyMethod(t *testing.T) {
 	r := New()
-	r.HandleAll("/resource", writeStatus(http.StatusNoContent))
+	r.HandleAny("/resource", writeStatus(http.StatusNoContent))
 
 	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch} {
 		t.Run(method, func(t *testing.T) {
@@ -578,10 +578,10 @@ func TestRouterHandleAllMatchesAnyMethod(t *testing.T) {
 	}
 }
 
-func TestRouterHandleAllUsesPathSpecificityBeforeMethod(t *testing.T) {
+func TestRouterHandleAnyUsesPathSpecificityBeforeMethod(t *testing.T) {
 	r := New()
 	r.Get("/users/{id}", writeStatus(http.StatusAccepted))
-	r.HandleAll("/users/me", writeStatus(http.StatusNoContent))
+	r.HandleAny("/users/me", writeStatus(http.StatusNoContent))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/users/me", nil))
@@ -591,7 +591,7 @@ func TestRouterHandleAllUsesPathSpecificityBeforeMethod(t *testing.T) {
 
 func TestRouterMethodRouteWinsOverAnyMethodForSamePattern(t *testing.T) {
 	r := New()
-	r.HandleAll("/resource", writeStatus(http.StatusNoContent))
+	r.HandleAny("/resource", writeStatus(http.StatusNoContent))
 	r.Post("/resource", writeStatus(http.StatusCreated))
 
 	post := httptest.NewRecorder()
@@ -693,7 +693,7 @@ func TestRouterExplicitHeadWinsOverImplicitGet(t *testing.T) {
 func TestRouterAnyMethodWinsOverImplicitHead(t *testing.T) {
 	r := New()
 	r.Get("/resource", writeStatus(http.StatusAccepted))
-	r.HandleAll("/resource", writeStatus(http.StatusNoContent))
+	r.HandleAny("/resource", writeStatus(http.StatusNoContent))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/resource", nil))
@@ -764,6 +764,7 @@ func TestMethodHelpers(t *testing.T) {
 		{"Delete", http.MethodDelete, (*Router).Delete},
 		{"Head", http.MethodHead, (*Router).Head},
 		{"Options", http.MethodOptions, (*Router).Options},
+		{"Any", "BREW", (*Router).Any},
 	}
 
 	for _, tt := range tests {
@@ -914,13 +915,13 @@ func TestPathRegistrationsRejectNonAbsolutePatterns(t *testing.T) {
 		{
 			name: "route relative",
 			register: func(r *Router) error {
-				return r.TryHandleAll("users/{id}", handler)
+				return r.TryHandleAny("users/{id}", handler)
 			},
 		},
 		{
 			name: "route empty",
 			register: func(r *Router) error {
-				return r.TryHandleAll("", handler)
+				return r.TryHandleAny("", handler)
 			},
 		},
 		{
@@ -969,19 +970,19 @@ func TestRegistrationRejectsDuplicateParamNames(t *testing.T) {
 		{
 			name: "route",
 			register: func(r *Router) error {
-				return r.TryHandleAll("/{id}/{id}", handler)
+				return r.TryHandleAny("/{id}/{id}", handler)
 			},
 		},
 		{
 			name: "route catch-all",
 			register: func(r *Router) error {
-				return r.TryHandleAll("/{id}/{*id}", handler)
+				return r.TryHandleAny("/{id}/{*id}", handler)
 			},
 		},
 		{
 			name: "route many params",
 			register: func(r *Router) error {
-				return r.TryHandleAll("/{a}/{b}/{c}/{d}/{e}/{a}", handler)
+				return r.TryHandleAny("/{a}/{b}/{c}/{d}/{e}/{a}", handler)
 			},
 		},
 		{
@@ -1094,9 +1095,9 @@ func TestNilHandlerUsesNotFoundHandler(t *testing.T) {
 	assertStatus(t, rec, http.StatusNotFound)
 }
 
-func TestNilHandleAllUsesNotFoundHandler(t *testing.T) {
+func TestNilHandleAnyUsesNotFoundHandler(t *testing.T) {
 	r := New()
-	r.HandleAll("/nil", nil)
+	r.HandleAny("/nil", nil)
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/nil", nil))
@@ -1104,10 +1105,10 @@ func TestNilHandleAllUsesNotFoundHandler(t *testing.T) {
 	assertStatus(t, rec, http.StatusNotFound)
 }
 
-func TestNilTryHandleAllUsesNotFoundHandler(t *testing.T) {
+func TestNilTryHandleAnyUsesNotFoundHandler(t *testing.T) {
 	r := New()
-	if err := r.TryHandleAll("/nil", nil); err != nil {
-		t.Fatalf("TryHandleAll route error = %v", err)
+	if err := r.TryHandleAny("/nil", nil); err != nil {
+		t.Fatalf("TryHandleAny route error = %v", err)
 	}
 
 	rec := httptest.NewRecorder()
@@ -1122,6 +1123,16 @@ func TestNilMethodHelperUsesNotFoundHandler(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/nil", nil))
+
+	assertStatus(t, rec, http.StatusNotFound)
+}
+
+func TestNilAnyUsesNotFoundHandler(t *testing.T) {
+	r := New()
+	r.Any("/nil", nil)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/nil", nil))
 
 	assertStatus(t, rec, http.StatusNotFound)
 }
@@ -1896,8 +1907,8 @@ func TestFailedTrySubRouterDoesNotConfigureChild(t *testing.T) {
 
 func TestTrySubRouterConflictDoesNotAttachExistingRouteEntry(t *testing.T) {
 	r := New()
-	r.HandleAll("/api/{name}.json", writeStatus(http.StatusAccepted))
-	r.HandleAll("/api/v{version}.json/", writeStatus(http.StatusNoContent))
+	r.HandleAny("/api/{name}.json", writeStatus(http.StatusAccepted))
+	r.HandleAny("/api/v{version}.json/", writeStatus(http.StatusNoContent))
 
 	var conflict *match.ConflictError
 	if child, err := r.TrySubRouter("/api/{name}.json"); !errors.As(err, &conflict) {

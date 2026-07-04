@@ -27,7 +27,7 @@ var ErrDuplicateParamName = fmt.Errorf("%w: duplicate parameter names are not al
 // ErrInvalidPathPattern reports a route, subrouter, or mount path pattern that
 // is not an absolute HTTP path.
 //
-// Path patterns registered with [Router.Handle], [Router.HandleAll],
+// Path patterns registered with [Router.Handle], [Router.HandleAny],
 // [Router.SubRouter], and [Router.Mount] must begin with "/". SubRouter and
 // Mount treat an empty pattern as "/"; route registrations do not.
 var ErrInvalidPathPattern = errors.New("path patterns must begin with /")

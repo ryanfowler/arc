@@ -38,12 +38,15 @@ func (r *Router) TryHandle(method, pattern string, h http.Handler) error {
 	return r.tryHandle(method, pattern, h, false)
 }
 
-// HandleAll registers h for pattern and lets it handle any request method.
+// HandleAny registers h for pattern and lets it handle any request method.
 //
-// Use HandleAll for endpoints such as health checks or webhooks where the
-// handler should decide which methods are acceptable:
+// Use HandleAny when you have an [http.Handler] value. For [http.HandlerFunc]
+// handlers, [Router.Any] is usually shorter.
 //
-//	r.HandleAll("/healthz", http.HandlerFunc(health))
+// Any-method routes are useful for endpoints such as health checks or webhooks
+// where the handler should decide which methods are acceptable:
+//
+//	r.HandleAny("/healthz", healthHandler)
 //
 // The path pattern follows Arc's route syntax. For example, "/users/{id}"
 // captures one segment and "/assets/{*path}" captures the remaining path.
@@ -52,15 +55,15 @@ func (r *Router) TryHandle(method, pattern string, h http.Handler) error {
 // router. The most specific path wins, so a direct route below a mounted prefix,
 // such as /api/healthz when /api is a subrouter or mount, handles that path.
 //
-// Invalid, duplicate, or ambiguous patterns panic. Use [Router.TryHandleAll] to
+// Invalid, duplicate, or ambiguous patterns panic. Use [Router.TryHandleAny] to
 // receive the registration error instead.
-func (r *Router) HandleAll(pattern string, h http.Handler) {
-	if err := r.TryHandleAll(pattern, h); err != nil {
+func (r *Router) HandleAny(pattern string, h http.Handler) {
+	if err := r.TryHandleAny(pattern, h); err != nil {
 		panic(fmt.Errorf("arc: register * %q: %w", pattern, err))
 	}
 }
 
-// TryHandleAll registers h for pattern, lets it handle any request method, and
+// TryHandleAny registers h for pattern, lets it handle any request method, and
 // returns registration errors.
 //
 // Registration errors include non-absolute path patterns, invalid parameter
@@ -71,8 +74,15 @@ func (r *Router) HandleAll(pattern string, h http.Handler) {
 // Routes, subrouters, and mounted handlers share one path matcher on the same
 // router. The most specific path wins, so a direct route below a mounted prefix
 // handles that path.
-func (r *Router) TryHandleAll(pattern string, h http.Handler) error {
+func (r *Router) TryHandleAny(pattern string, h http.Handler) error {
 	return r.tryHandle("", pattern, h, true)
+}
+
+// Any registers h for pattern and lets it handle any request method.
+//
+// Any is the [http.HandlerFunc] convenience form of [Router.HandleAny].
+func (r *Router) Any(pattern string, h http.HandlerFunc) {
+	r.HandleAny(pattern, handlerFuncOrNil(h))
 }
 
 func (r *Router) tryHandle(method, pattern string, h http.Handler, anyMethod bool) error {
