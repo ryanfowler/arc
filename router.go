@@ -916,7 +916,65 @@ func serveWithURLPath(w http.ResponseWriter, req *http.Request, h http.Handler, 
 }
 
 func escapedSlashMatchPath(req *http.Request) (string, bool) {
-	return markEscapedSlashes(req.URL.Path, req.URL.EscapedPath())
+	rawPath := req.URL.RawPath
+	if !rawPathMatchesPath(rawPath, req.URL.Path) {
+		return req.URL.Path, false
+	}
+	return markEscapedSlashes(req.URL.Path, rawPath)
+}
+
+// rawPathMatchesPath is the allocation-free subset of url.URL.EscapedPath
+// needed by escapedSlashMatchPath. RawPath is only a hint, so preserve the
+// standard library's behavior and ignore it unless it is a valid encoding of
+// Path.
+func rawPathMatchesPath(rawPath, path string) bool {
+	pathIndex := 0
+	for i := 0; i < len(rawPath); i++ {
+		c := rawPath[i]
+		if c == '%' {
+			if i+2 >= len(rawPath) {
+				return false
+			}
+			hi, ok := fromHex(rawPath[i+1])
+			if !ok {
+				return false
+			}
+			lo, ok := fromHex(rawPath[i+2])
+			if !ok {
+				return false
+			}
+			c = hi<<4 | lo
+			i += 2
+		} else if !validRawPathByte(c) {
+			return false
+		}
+
+		if pathIndex >= len(path) || path[pathIndex] != c {
+			return false
+		}
+		pathIndex++
+	}
+	return pathIndex == len(path)
+}
+
+func validRawPathByte(c byte) bool {
+	switch {
+	case c >= 'a' && c <= 'z':
+		return true
+	case c >= 'A' && c <= 'Z':
+		return true
+	case c >= '0' && c <= '9':
+		return true
+	}
+
+	switch c {
+	case '-', '_', '.', '~',
+		'!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', ':', '@',
+		'[', ']', '/':
+		return true
+	default:
+		return false
+	}
 }
 
 func hasEscapedSlash(path string) bool {
