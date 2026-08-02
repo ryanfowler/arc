@@ -331,6 +331,36 @@ func TestRouterUsesDecodedPathWhenRawPathHasNoEscapedSlash(t *testing.T) {
 	assertStatus(t, rec, http.StatusAccepted)
 }
 
+func TestRouterIgnoresInvalidRawPathWithEscapedSlash(t *testing.T) {
+	r := New()
+	r.Get("/files/{name}", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("name"); got != "a/b" {
+			t.Fatalf("PathValue(name) = %q, want %q", got, "a/b")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	tests := []struct {
+		name    string
+		rawPath string
+	}{
+		{name: "does not encode path", rawPath: "/files/a%2Fc"},
+		{name: "malformed escape", rawPath: "/files/a%2Fb%"},
+		{name: "invalid raw byte", rawPath: "/files/a%2Fb?"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/files/a/b", nil)
+			req.URL.RawPath = tt.rawPath
+			rec := httptest.NewRecorder()
+
+			r.ServeHTTP(rec, req)
+
+			assertStatus(t, rec, http.StatusNotFound)
+		})
+	}
+}
+
 func TestRouterEscapesLiteralBracesInPattern(t *testing.T) {
 	r := New()
 	r.Get("/files/{{name}}", writeStatus(http.StatusAccepted))
