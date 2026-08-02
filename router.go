@@ -301,7 +301,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, params match.Params, decodeParams bool) {
-	if r.serveHost(w, req, path, params, decodeParams) {
+	if r.hasHosts && r.serveHost(w, req, path, params, decodeParams) {
 		return
 	}
 	if r.servePath(w, req, path, params, decodeParams) {
@@ -312,10 +312,6 @@ func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, pa
 }
 
 func (r *Router) serveHost(w http.ResponseWriter, req *http.Request, path string, params match.Params, decodeParams bool) bool {
-	if !r.hasHosts {
-		return false
-	}
-
 	host := normalizeRequestHost(req.Host)
 	if host == "" {
 		return false
@@ -336,7 +332,15 @@ func (r *Router) servePath(w http.ResponseWriter, req *http.Request, path string
 	var ok bool
 
 	if r.hasRoutes {
-		entry, pathParams, ok = r.pathRoutes.Match(path)
+		// A map lookup is substantially cheaper than walking the matcher. It is
+		// sufficient when every registered pattern is literal. Dynamic routers
+		// still use the matcher so that static and parameterized patterns keep
+		// their normal precedence.
+		if r.hasDynamicPathPatterns {
+			entry, pathParams, ok = r.pathRoutes.Match(path)
+		} else {
+			entry, ok = r.pathEntries[path]
+		}
 		if ok && entry.methods != nil {
 			if decodeParams {
 				pathParams = restoreParams(pathParams)
@@ -851,12 +855,11 @@ func newChildRouter(parent *Router) *childRouter {
 }
 
 func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path string, params match.Params, decodeParams bool) {
-	if params.Len() != 0 {
-		setPathValues(req, params)
-	}
-
 	if c.mounted {
 		req.Pattern = c.pattern
+		if params.Len() != 0 {
+			setPathValues(req, params)
+		}
 		if !decodeParams && c.staticMountedHandler != nil {
 			c.staticMountedHandler.ServeHTTP(w, req)
 			return
