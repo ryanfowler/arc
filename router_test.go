@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -3474,4 +3475,148 @@ func pathMiddleware(name string, paths *[]string) Middleware {
 			next.ServeHTTP(w, req)
 		})
 	}
+}
+
+func TestRouterDispatchIsTheSameWithAndWithoutCompiledPathRoutes(t *testing.T) {
+	// A router with more than maxCompiledPathPatterns patterns does not keep a
+	// compiled matcher. The filler routes do not match any request below.
+	newRouter := func(fillers int) *Router {
+		fill := func(router *Router) {
+			for i := 0; i < fillers; i++ {
+				router.Get("/filler/"+strconv.Itoa(i), writeStatus(http.StatusTeapot))
+			}
+		}
+		handler := func(w http.ResponseWriter, req *http.Request) {
+			w.Header().Set("X-Pattern", req.Pattern)
+			w.Header().Set("X-ID", req.PathValue("id"))
+			w.Header().Set("X-Path", req.URL.Path)
+		}
+
+		r := New()
+		r.SetStrictSlash(false)
+		r.Get("/healthz", handler)
+		r.Get("/users/{id}", handler)
+		r.Get("/files/{id}.json", handler)
+		r.Get("/static/{*id}", handler)
+		r.Mount("/assets", http.HandlerFunc(handler))
+		api := r.SubRouter("/api/{version}")
+		api.Get("/items/{id}", handler)
+		tenant := r.Host("{tenant}.example.com")
+		tenant.Get("/users/{id}", handler)
+		admin := tenant.SubRouter("/admin")
+		admin.Get("/jobs/{id}", handler)
+		for _, router := range []*Router{r, api, tenant, admin} {
+			fill(router)
+			if compiled := router.compiledPathRoutes != nil; compiled != (fillers == 0) {
+				t.Fatalf("with %d fillers: compiled = %v", fillers, compiled)
+			}
+		}
+		return r
+	}
+
+	requests := []struct {
+		method string
+		target string
+	}{
+		{http.MethodGet, "/healthz"},
+		{http.MethodPost, "/healthz"},
+		{http.MethodGet, "/users/42"},
+		{http.MethodGet, "/users/42/"},
+		{http.MethodGet, "/users/a%2Fb"},
+		{http.MethodGet, "/files/report.json"},
+		{http.MethodGet, "/static/css/app.css"},
+		{http.MethodGet, "/assets"},
+		{http.MethodGet, "/assets/css/app.css"},
+		{http.MethodGet, "/api/v1/items/7"},
+		{http.MethodGet, "/api/v1/missing"},
+		{http.MethodGet, "/missing"},
+		{http.MethodGet, "https://acme.example.com/users/42"},
+		{http.MethodGet, "https://acme.example.com/admin/jobs/9"},
+		{http.MethodGet, "https://acme.example.com/missing"},
+	}
+
+	compiled := newRouter(0)
+	plain := newRouter(maxCompiledPathPatterns + 1)
+
+	for _, tc := range requests {
+		want := httptest.NewRecorder()
+		plain.ServeHTTP(want, httptest.NewRequest(tc.method, tc.target, nil))
+		got := httptest.NewRecorder()
+		compiled.ServeHTTP(got, httptest.NewRequest(tc.method, tc.target, nil))
+
+		if got.Code != want.Code {
+			t.Errorf("%s %s: status = %d, want %d", tc.method, tc.target, got.Code, want.Code)
+		}
+		for _, key := range []string{"X-Pattern", "X-ID", "X-Path", headerAllow} {
+			if got.Header().Get(key) != want.Header().Get(key) {
+				t.Errorf("%s %s: %s = %q, want %q", tc.method, tc.target, key, got.Header().Get(key), want.Header().Get(key))
+			}
+		}
+	}
+}
+
+func TestRouterStopsCompilingPathRoutesAboveLimit(t *testing.T) {
+	r := New()
+	for i := 0; i < maxCompiledPathPatterns; i++ {
+		r.Get("/items/"+strconv.Itoa(i)+"/{id}", writeStatus(http.StatusNoContent))
+	}
+	if r.compiledPathRoutes == nil {
+		t.Fatalf("router with %d patterns is not compiled", maxCompiledPathPatterns)
+	}
+
+	r.Get("/late/{id}", writeStatus(http.StatusAccepted))
+	if r.compiledPathRoutes != nil {
+		t.Fatalf("router with %d patterns is compiled", maxCompiledPathPatterns+1)
+	}
+
+	for target, want := range map[string]int{
+		"/items/0/a": http.StatusNoContent,
+		"/late/a":    http.StatusAccepted,
+	} {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		assertStatus(t, rec, want)
+	}
+}
+
+func TestRelaxedSlashRouteReplacesSubRouterCaptures(t *testing.T) {
+	r := New()
+	r.SetStrictSlash(false)
+	tenant := r.Host("{tenant}.example.com")
+	tenant.SubRouter("/files/{id}").Get("/meta", writeStatus(http.StatusNoContent))
+	tenant.Get("/files/{id}", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("tenant"); got != "acme" {
+			t.Fatalf("req.PathValue(tenant) = %q, want %q", got, "acme")
+		}
+		if got := req.PathValue("id"); got != "7" {
+			t.Fatalf("req.PathValue(id) = %q, want %q", got, "7")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://acme.example.com/files/7/", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
+}
+
+func TestUnusedRelaxedSlashLookupKeepsSubRouterCaptures(t *testing.T) {
+	r := New()
+	r.SetStrictSlash(false)
+	tenant := r.Host("{tenant}.example.com")
+	tenant.Get("/other/{name}", writeStatus(http.StatusNoContent))
+	tenant.SubRouter("/files/{id}").Get("/", func(w http.ResponseWriter, req *http.Request) {
+		if got := req.PathValue("tenant"); got != "acme" {
+			t.Fatalf("req.PathValue(tenant) = %q, want %q", got, "acme")
+		}
+		if got := req.PathValue("id"); got != "7" {
+			t.Fatalf("req.PathValue(id) = %q, want %q", got, "7")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://acme.example.com/files/7/", nil))
+
+	assertStatus(t, rec, http.StatusAccepted)
 }

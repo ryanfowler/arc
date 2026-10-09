@@ -51,8 +51,10 @@ func hostInsertError(err error) error {
 	return ErrInvalidHostPattern
 }
 
-func (m *hostMatcher[T]) Match(host string) (T, match.Params, bool) {
-	return m.dnsRoutes.Match(host)
+// MatchAppend appends the captured parameters to params. When the result is
+// false, params is unchanged.
+func (m *hostMatcher[T]) MatchAppend(host string, params *match.Params) (T, bool) {
+	return m.dnsRoutes.MatchAppend(host, params)
 }
 
 func normalizeHostPattern(pattern string) (string, error) {
