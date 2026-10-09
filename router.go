@@ -72,6 +72,7 @@ type Middleware func(http.Handler) http.Handler
 // ServeHTTP or with other registration and configuration methods.
 type Router struct {
 	pathRoutes             match.Router[*pathEntry]
+	compiledPathRoutes     *match.Matcher[*pathEntry]
 	pathEntries            map[string]*pathEntry
 	hostRoutes             hostMatcher[*childRouter]
 	hasDynamicPathPatterns bool
@@ -297,10 +298,15 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if hasEscapedSlash(req.URL.RawPath) {
 		path, decodeParams = escapedSlashMatchPath(req)
 	}
-	r.serve(w, req, path, match.Params{}, decodeParams)
+	var params match.Params
+	r.serve(w, req, path, &params, decodeParams)
 }
 
-func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, params match.Params, decodeParams bool) {
+// serve dispatches req below r. Every routing level appends its captures to
+// params, so that one buffer holds the parameters of the whole request. A
+// deeper level's parameter has precedence over a parameter with the same name
+// from an earlier level, because setPathValues writes them in order.
+func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, params *match.Params, decodeParams bool) {
 	if r.hasHosts && r.serveHost(w, req, path, params, decodeParams) {
 		return
 	}
@@ -311,25 +317,26 @@ func (r *Router) serve(w http.ResponseWriter, req *http.Request, path string, pa
 	r.notFoundHandler.ServeHTTP(w, requestForHandler(req, params, ""))
 }
 
-func (r *Router) serveHost(w http.ResponseWriter, req *http.Request, path string, params match.Params, decodeParams bool) bool {
+func (r *Router) serveHost(w http.ResponseWriter, req *http.Request, path string, params *match.Params, decodeParams bool) bool {
 	host := normalizeRequestHost(req.Host)
 	if host == "" {
 		return false
 	}
 
-	child, hostParams, ok := r.hostRoutes.Match(host)
+	child, ok := r.hostRoutes.MatchAppend(host, params)
 	if !ok {
 		return false
 	}
 
-	child.serve(w, req, path, mergeParams(params, hostParams), decodeParams)
+	child.serve(w, req, path, params, decodeParams)
 	return true
 }
 
-func (r *Router) servePath(w http.ResponseWriter, req *http.Request, path string, params match.Params, decodeParams bool) bool {
+func (r *Router) servePath(w http.ResponseWriter, req *http.Request, path string, params *match.Params, decodeParams bool) bool {
 	var entry *pathEntry
-	var pathParams match.Params
 	var ok bool
+	// The captures of this level are the parameters at index base and above.
+	base := params.Len()
 
 	if r.hasRoutes {
 		// A map lookup is substantially cheaper than walking the matcher. It is
@@ -337,35 +344,50 @@ func (r *Router) servePath(w http.ResponseWriter, req *http.Request, path string
 		// still use the matcher so that static and parameterized patterns keep
 		// their normal precedence.
 		if r.hasDynamicPathPatterns {
-			entry, pathParams, ok = r.pathRoutes.Match(path)
+			entry, ok = r.matchPath(path, params)
 		} else {
 			entry, ok = r.pathEntries[path]
 		}
 		if ok && entry.methods != nil {
 			if decodeParams {
-				pathParams = restoreParams(pathParams)
+				restoreParams(params, base)
 			}
-			r.serveRouteMethods(w, req, entry.methods, mergeParams(params, pathParams))
+			r.serveRouteMethods(w, req, entry.methods, params)
 			return true
 		}
 
 		if relaxedPath, relaxed := r.relaxedSlashPath(path); relaxed {
-			relaxedEntry, relaxedParams, relaxedOK := r.pathRoutes.Match(relaxedPath)
+			relaxedParams := params
+			var scratch match.Params
+			if params.Len() != base {
+				// The first lookup matched a subrouter and its captures must
+				// stay in params in case the relaxed lookup is not used. Match
+				// the relaxed path into a separate buffer.
+				for i := 0; i < base; i++ {
+					param := params.At(i)
+					scratch.Append(param.Key, param.Val)
+				}
+				relaxedParams = &scratch
+			}
+			relaxedEntry, relaxedOK := r.matchPath(relaxedPath, relaxedParams)
 			if relaxedOK && relaxedEntry.methods != nil && !routePatternEndsInSlash(relaxedEntry.methods.pattern) {
 				if decodeParams {
-					relaxedParams = restoreParams(relaxedParams)
+					restoreParams(relaxedParams, base)
 				}
-				r.serveRouteMethods(w, req, relaxedEntry.methods, mergeParams(params, relaxedParams))
+				r.serveRouteMethods(w, req, relaxedEntry.methods, relaxedParams)
 				return true
+			}
+			if relaxedParams == params {
+				params.Truncate(base)
 			}
 		}
 	}
 
 	if ok && entry.child != nil {
 		if decodeParams {
-			pathParams = restoreParams(pathParams)
+			restoreParams(params, base)
 		}
-		entry.child.serve(w, req, "/", mergeParams(params, pathParams), decodeParams)
+		entry.child.serve(w, req, "/", params, decodeParams)
 		return true
 	}
 
@@ -373,27 +395,49 @@ func (r *Router) servePath(w http.ResponseWriter, req *http.Request, path string
 		return false
 	}
 
-	child, childPath, childParams, childOK := r.matchChildPrefix(path)
+	child, childPath, childOK := r.matchChildPrefix(path, params)
 	if !childOK {
 		return false
 	}
 	if decodeParams {
-		childParams = restoreParams(childParams)
+		restoreParams(params, base)
 	}
-	child.serve(w, req, childPath, mergeParams(params, childParams), decodeParams)
+	child.serve(w, req, childPath, params, decodeParams)
 	return true
 }
 
-func (r *Router) matchChildPrefix(path string) (*childRouter, string, match.Params, bool) {
-	mount, ok := r.pathRoutes.MatchPrefix(path)
-	if ok && mount.Value.child != nil {
-		return mount.Value.child, mount.Rest, mount.Params, true
+// matchPath appends the captured parameters to params. When the result is
+// false, params is unchanged.
+func (r *Router) matchPath(path string, params *match.Params) (*pathEntry, bool) {
+	if r.compiledPathRoutes != nil {
+		return r.compiledPathRoutes.MatchAppend(path, params)
 	}
+	return r.pathRoutes.MatchAppend(path, params)
+}
+
+// matchChildPrefix finds the subrouter or mounted handler that owns path. It
+// appends the captures of the matched prefix to params and returns the path
+// that remains for the child. When the result is false, params is unchanged.
+func (r *Router) matchChildPrefix(path string, params *match.Params) (*childRouter, string, bool) {
+	base := params.Len()
+
+	var mount *pathEntry
+	var rest string
+	var ok bool
+	if r.compiledPathRoutes != nil {
+		mount, rest, ok = r.compiledPathRoutes.MatchPrefixAppend(path, params)
+	} else {
+		mount, rest, ok = r.pathRoutes.MatchPrefixAppend(path, params)
+	}
+	if ok && mount.child != nil {
+		return mount.child, rest, true
+	}
+	params.Truncate(base)
 
 	for end := len(path); ; {
 		slash := strings.LastIndexByte(path[:end], '/')
 		if slash < 0 {
-			return nil, "", match.Params{}, false
+			return nil, "", false
 		}
 
 		prefix := path[:slash]
@@ -401,13 +445,14 @@ func (r *Router) matchChildPrefix(path string) (*childRouter, string, match.Para
 			prefix = "/"
 		}
 
-		entry, params, ok := r.pathRoutes.Match(prefix)
+		entry, ok := r.matchPath(prefix, params)
 		if ok && entry.child != nil {
-			return entry.child, childPrefixRest(path, prefix), params, true
+			return entry.child, childPrefixRest(path, prefix), true
 		}
+		params.Truncate(base)
 
 		if slash == 0 {
-			return nil, "", match.Params{}, false
+			return nil, "", false
 		}
 		end = slash
 	}
@@ -441,7 +486,7 @@ func remainingChildPath(path string, index int) string {
 	return path[index-1:]
 }
 
-func (r *Router) serveRouteMethods(w http.ResponseWriter, req *http.Request, methods *routeMethods, params match.Params) {
+func (r *Router) serveRouteMethods(w http.ResponseWriter, req *http.Request, methods *routeMethods, params *match.Params) {
 	route := methods.routeFor(req.Method, r.implicitHead)
 	if route == nil {
 		r.setAllowHeader(w, methods)
@@ -493,6 +538,25 @@ func (r *Router) insertRoute(reg routeRegistration) error {
 	return insertRouteRegistration(r, reg)
 }
 
+// maxCompiledPathPatterns is the largest number of path patterns for which a
+// router keeps a compiled matcher.
+//
+// A compiled matcher makes lookups faster, but it must be rebuilt after each
+// registration, and one rebuild takes time proportional to the number of
+// patterns. The limit keeps the total registration cost of a router small. A
+// router with more patterns uses pathRoutes directly. Lookups on large tables
+// gain little from compilation.
+const maxCompiledPathPatterns = 256
+
+// compilePathRoutes updates compiledPathRoutes after a change to pathRoutes.
+func (r *Router) compilePathRoutes() {
+	if len(r.pathEntries) > maxCompiledPathPatterns {
+		r.compiledPathRoutes = nil
+		return
+	}
+	r.compiledPathRoutes = r.pathRoutes.Compile()
+}
+
 func (r *Router) ensurePathEntries(capHint int) {
 	if r.pathEntries == nil {
 		r.pathEntries = make(map[string]*pathEntry, capHint)
@@ -515,6 +579,7 @@ func insertRouteRegistration(r *Router, reg routeRegistration) error {
 		if isDynamicMatchPattern(reg.pattern) {
 			r.hasDynamicPathPatterns = true
 		}
+		r.compilePathRoutes()
 	}
 
 	if entry.methods == nil {
@@ -606,6 +671,8 @@ func (r *Router) insertStaticChildPathEntries(regs childPathRegistrationSet) err
 	}
 
 	r.ensurePathEntries(pendingCount)
+	// Deferred, because an insert error can leave an earlier pattern registered.
+	defer r.compilePathRoutes()
 	for i := 0; i < pendingCount; i++ {
 		entry := pending[i]
 		if entry.new {
@@ -680,6 +747,9 @@ func (r *Router) insertTransactionalChildPathEntries(regs childPathRegistrationS
 			continue
 		}
 		entry.entry.child = entry.child
+	}
+	if routesCloned {
+		r.compilePathRoutes()
 	}
 
 	return nil
@@ -854,7 +924,7 @@ func newChildRouter(parent *Router) *childRouter {
 	}
 }
 
-func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path string, params match.Params, decodeParams bool) {
+func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path string, params *match.Params, decodeParams bool) {
 	if c.mounted {
 		req.Pattern = c.pattern
 		if params.Len() != 0 {
@@ -884,7 +954,7 @@ func (c *childRouter) serve(w http.ResponseWriter, req *http.Request, path strin
 	c.router.serve(w, req, path, params, decodeParams)
 }
 
-func requestForHandler(req *http.Request, params match.Params, pattern string) *http.Request {
+func requestForHandler(req *http.Request, params *match.Params, pattern string) *http.Request {
 	req.Pattern = pattern
 	if params.Len() != 0 {
 		setPathValues(req, params)
@@ -1379,79 +1449,14 @@ func restoreEscapedSlashFrom(path string, first int) string {
 	return b.String()
 }
 
-func restoreParams(params match.Params) match.Params {
-	switch params.Len() {
-	case 0:
-		return params
-	case 1:
-		param := params.At(0)
-		val, ok := restoreEscapedSlashValue(param.Val)
-		if !ok {
-			return params
-		}
-		param.Val = val
-		return match.ParamsOf(param)
-	case 2:
-		p0 := params.At(0)
-		p1 := params.At(1)
-		ok := restoreParamValue(&p0)
-		ok = restoreParamValue(&p1) || ok
-		if !ok {
-			return params
-		}
-		return match.ParamsOf(p0, p1)
-	case 3:
-		p0 := params.At(0)
-		p1 := params.At(1)
-		p2 := params.At(2)
-		ok := restoreParamValue(&p0)
-		ok = restoreParamValue(&p1) || ok
-		ok = restoreParamValue(&p2) || ok
-		if !ok {
-			return params
-		}
-		return match.ParamsOf(p0, p1, p2)
-	case 4:
-		p0 := params.At(0)
-		p1 := params.At(1)
-		p2 := params.At(2)
-		p3 := params.At(3)
-		ok := restoreParamValue(&p0)
-		ok = restoreParamValue(&p1) || ok
-		ok = restoreParamValue(&p2) || ok
-		ok = restoreParamValue(&p3) || ok
-		if !ok {
-			return params
-		}
-		return match.ParamsOf(p0, p1, p2, p3)
-	}
-
-	var restored []match.Param
-	for i := 0; i < params.Len(); i++ {
-		param := params.At(i)
-		if restoreParamValue(&param) && restored == nil {
-			restored = params.AppendTo(nil)
-			restored[i] = param
-			continue
-		}
-		if restored != nil {
-			restored[i] = param
+// restoreParams restores escaped slashes in the parameters at index from and
+// above.
+func restoreParams(params *match.Params, from int) {
+	for i := from; i < params.Len(); i++ {
+		if val, ok := restoreEscapedSlashValue(params.At(i).Val); ok {
+			params.SetVal(i, val)
 		}
 	}
-	if restored == nil {
-		return params
-	}
-
-	return match.ParamsOf(restored...)
-}
-
-func restoreParamValue(param *match.Param) bool {
-	val, ok := restoreEscapedSlashValue(param.Val)
-	if !ok {
-		return false
-	}
-	param.Val = val
-	return true
 }
 
 func decodedMatchPath(path string) string {
@@ -1503,47 +1508,9 @@ func writeEscapedPathChunk(b *strings.Builder, s string) {
 	b.WriteString(url.PathEscape(s))
 }
 
-func setPathValues(req *http.Request, params match.Params) {
+func setPathValues(req *http.Request, params *match.Params) {
 	for i := 0; i < params.Len(); i++ {
 		param := params.At(i)
 		req.SetPathValue(param.Key, param.Val)
 	}
-}
-
-func mergeParams(base, overlay match.Params) match.Params {
-	if base.Len() == 0 {
-		return overlay
-	}
-	if overlay.Len() == 0 {
-		return base
-	}
-
-	for i := 0; i < base.Len(); i++ {
-		param := base.At(i)
-		if _, ok := overlay.TryGet(param.Key); ok {
-			return mergeParamsWithOverride(base, overlay, i)
-		}
-	}
-
-	return match.Merge(base, overlay)
-}
-
-func mergeParamsWithOverride(base, overlay match.Params, conflict int) match.Params {
-	if base.Len() == 1 {
-		return overlay
-	}
-
-	filtered := make([]match.Param, 0, base.Len()-1)
-	for i := range conflict {
-		filtered = append(filtered, base.At(i))
-	}
-	for i := conflict + 1; i < base.Len(); i++ {
-		param := base.At(i)
-		if _, ok := overlay.TryGet(param.Key); ok {
-			continue
-		}
-		filtered = append(filtered, param)
-	}
-
-	return match.Merge(match.ParamsOf(filtered...), overlay)
 }

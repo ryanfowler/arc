@@ -180,7 +180,7 @@ func BenchmarkHostMatcherMatch(b *testing.B) {
 			var value string
 			for i := 0; i < b.N; i++ {
 				var params match.Params
-				value, params, matched = m.Match(host)
+				value, matched = m.MatchAppend(host, &params)
 				if params.Len() != 0 {
 					b.Fatalf("params length = %d, want 0", params.Len())
 				}
@@ -211,7 +211,7 @@ func BenchmarkHostMatcherMatch(b *testing.B) {
 			var tenant string
 			for i := 0; i < b.N; i++ {
 				var params match.Params
-				value, params, matched = m.Match(host)
+				value, matched = m.MatchAppend(host, &params)
 				tenant = params.Get("tenant")
 			}
 
@@ -672,6 +672,60 @@ func BenchmarkRouterServeHTTPEdgeCases(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				w.status = 0
 				r.ServeHTTP(w, req)
+			}
+
+			benchmarkStatus = w.status
+		})
+	}
+}
+
+// BenchmarkRouterServeHTTPLargeTable measures dispatch through one router that
+// has many dynamic routes. Each iteration serves a different request so that
+// lookups reach different parts of the route table.
+func BenchmarkRouterServeHTTPLargeTable(b *testing.B) {
+	const resources = 500
+
+	r := New()
+	handler := func(w http.ResponseWriter, req *http.Request) {
+		benchmarkParam = req.PathValue("id")
+		w.WriteHeader(http.StatusNoContent)
+	}
+	for i := 0; i < resources; i++ {
+		name := "/resource" + strconv.Itoa(i)
+		r.Get(name+"/{id}", handler)
+		r.Get(name+"/{id}/children/{childID}", handler)
+	}
+
+	newRequests := func(suffix string) []*http.Request {
+		reqs := make([]*http.Request, resources)
+		for i := range reqs {
+			// Multiply by a number coprime to resources to visit the table in a
+			// non-sequential order.
+			name := "/resource" + strconv.Itoa(i*7919%resources)
+			reqs[i] = httptest.NewRequest(http.MethodGet, name+suffix, nil)
+		}
+		return reqs
+	}
+
+	benchmarks := []struct {
+		name   string
+		suffix string
+	}{
+		{name: "final_param", suffix: "/42"},
+		{name: "nested_params", suffix: "/42/children/7"},
+		{name: "not_found", suffix: "/42/missing/7"},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			reqs := newRequests(bm.suffix)
+			w := &benchmarkResponseWriter{}
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				w.status = 0
+				r.ServeHTTP(w, reqs[i%len(reqs)])
 			}
 
 			benchmarkStatus = w.status
